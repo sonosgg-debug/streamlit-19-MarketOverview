@@ -4,13 +4,42 @@ Collects data from Yahoo Finance, Naver Finance API, CNN Fear & Greed, and KRX C
 """
 
 import os
+import sys
 import json
 import requests
+import subprocess
+import threading
 from datetime import datetime, timedelta
 import pandas as pd
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 from config import INDICATORS_META, INTEGER_ONLY_TICKERS
+
+_krx_update_lock = threading.Lock()
+_krx_updating = False
+
+def trigger_krx_background_update():
+    """Trigger get_kospi_fundamentals.py in background if cache is stale or requested."""
+    global _krx_updating
+    with _krx_update_lock:
+        if _krx_updating:
+            return
+        _krx_updating = True
+
+    def _worker():
+        global _krx_updating
+        try:
+            script_path = os.path.join(os.path.dirname(__file__), "get_kospi_fundamentals.py")
+            if os.path.exists(script_path):
+                subprocess.run([sys.executable, script_path, "--batch"], cwd=os.path.dirname(__file__), timeout=180)
+        except Exception as e:
+            print(f"Background KRX cache update error: {e}")
+        finally:
+            with _krx_update_lock:
+                _krx_updating = False
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
 
 def get_fear_and_greed():
     """Fetch CNN Fear & Greed Index score and historical data."""
@@ -52,10 +81,20 @@ def get_fear_and_greed():
     return None
 
 def get_krx_cache_data():
-    """Read data from local krx_cache.json if available."""
+    """Read data from local krx_cache.json if available and trigger background refresh if stale."""
     cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
+
+    # Check staleness: if older than 4 hours or doesn't exist, trigger background update
     if not os.path.exists(cache_path):
+        trigger_krx_background_update()
         return {}
+
+    try:
+        mtime = datetime.fromtimestamp(os.path.getmtime(cache_path))
+        if (datetime.now() - mtime).total_seconds() > 14400:
+            trigger_krx_background_update()
+    except Exception:
+        pass
 
     try:
         with open(cache_path, "r", encoding="utf-8") as f:
