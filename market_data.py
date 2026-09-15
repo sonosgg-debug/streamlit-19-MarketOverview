@@ -62,7 +62,7 @@ def get_fear_and_greed():
             history = [
                 {"date": datetime.fromtimestamp(item["x"] / 1000).strftime("%Y-%m-%d"), "value": round(float(item["y"]), 2)}
                 for item in hist_raw if "x" in item and "y" in item
-            ][-60:]
+            ][-200:]
 
             return {
                 "ticker": "FEAR_GREED",
@@ -139,7 +139,7 @@ def get_krx_cache_data():
                 "high": item.get("high"),
                 "low": item.get("low"),
                 "close": item.get("close"),
-                "history": history[-60:],
+                "history": history[-200:],
                 "negative_favorable": meta.get("negative_favorable", False),
                 "is_integer_only": ticker in INTEGER_ONLY_TICKERS,
                 "is_percent": meta.get("is_percent", False)
@@ -150,7 +150,7 @@ def get_krx_cache_data():
         return {}
 
 def fetch_naver_price(ticker):
-    """Fetch recent price data for Korean stocks and indexes using Naver Mobile API."""
+    """Fetch recent price data for Korean stocks and indexes using Naver Mobile API (up to 200 trading days)."""
     try:
         naver_code = ticker.replace(".KS", "").replace(".KQ", "")
         if ticker == "^KS11":
@@ -158,54 +158,63 @@ def fetch_naver_price(ticker):
         elif ticker == "^KQ11":
             naver_code = "KOSDAQ"
 
-        url = f"https://m.stock.naver.com/api/stock/{naver_code}/price?pageSize=60&page=1"
         headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(url, headers=headers, timeout=4)
-        if res.status_code == 200:
-            data = res.json()
-            if isinstance(data, list) and len(data) > 0:
-                latest = data[0]
-                price = float(latest["closePrice"].replace(",", ""))
-                open_val = float(latest["openPrice"].replace(",", ""))
-                high_val = float(latest["highPrice"].replace(",", ""))
-                low_val = float(latest["lowPrice"].replace(",", ""))
-                change_amt = float(latest["compareToPreviousClosePrice"].replace(",", ""))
-                change_pct = float(latest["fluctuationsRatio"].replace(",", ""))
+        raw_items = []
+        for p in range(1, 5):
+            url = f"https://m.stock.naver.com/api/stock/{naver_code}/price?pageSize=60&page={p}"
+            res = requests.get(url, headers=headers, timeout=4)
+            if res.status_code == 200:
+                p_data = res.json()
+                if isinstance(p_data, list) and len(p_data) > 0:
+                    raw_items.extend(p_data)
+                else:
+                    break
+            else:
+                break
 
-                # History in chronological order
-                history = [
-                    {"date": item["localTradedAt"][:10], "value": float(item["closePrice"].replace(",", ""))}
-                    for item in reversed(data)
-                ]
+        if raw_items:
+            latest = raw_items[0]
+            price = float(latest["closePrice"].replace(",", ""))
+            open_val = float(latest["openPrice"].replace(",", ""))
+            high_val = float(latest["highPrice"].replace(",", ""))
+            low_val = float(latest["lowPrice"].replace(",", ""))
+            change_amt = float(latest["compareToPreviousClosePrice"].replace(",", ""))
+            change_pct = float(latest["fluctuationsRatio"].replace(",", ""))
 
-                meta = INDICATORS_META.get(ticker, {})
-                return {
-                    "ticker": ticker,
-                    "name": meta.get("name", ticker),
-                    "price": price,
-                    "change_amt": change_amt,
-                    "change_percent": change_pct,
-                    "open": open_val,
-                    "high": high_val,
-                    "low": low_val,
-                    "close": price,
-                    "history": history[-60:],
-                    "negative_favorable": meta.get("negative_favorable", False),
-                    "is_integer_only": ticker in INTEGER_ONLY_TICKERS,
-                    "is_percent": False
-                }
+            # History in chronological order (up to 200)
+            history = [
+                {"date": item["localTradedAt"][:10], "value": float(item["closePrice"].replace(",", ""))}
+                for item in reversed(raw_items)
+            ][-200:]
+
+            meta = INDICATORS_META.get(ticker, {})
+            return {
+                "ticker": ticker,
+                "name": meta.get("name", ticker),
+                "price": price,
+                "change_amt": change_amt,
+                "change_percent": change_pct,
+                "open": open_val,
+                "high": high_val,
+                "low": low_val,
+                "close": price,
+                "history": history,
+                "negative_favorable": meta.get("negative_favorable", False),
+                "is_integer_only": ticker in INTEGER_ONLY_TICKERS,
+                "is_percent": False
+            }
     except Exception:
         pass
     return None
 
 def fetch_yahoo_bulk(tickers):
-    """Fetch daily OHLCV and history for multiple tickers via yfinance."""
+    """Fetch daily OHLCV and history for multiple tickers via yfinance (up to 200 trading days)."""
     results = {}
     if not tickers:
         return results
 
     try:
-        df = yf.download(tickers, period="3mo", interval="1d", group_by="ticker", progress=False, threads=True)
+        df = yf.download(tickers, period="1y", interval="1d", group_by="ticker", progress=False, threads=True)
         if df.empty:
             return results
 
@@ -239,7 +248,7 @@ def fetch_yahoo_bulk(tickers):
                 history = [
                     {"date": idx.strftime("%Y-%m-%d"), "value": round(float(row["Close"]), 4)}
                     for idx, row in tdf.iterrows()
-                ][-60:]
+                ][-200:]
 
                 meta = INDICATORS_META.get(ticker, {})
                 results[ticker] = {
@@ -307,7 +316,7 @@ def compute_skhy_premium(skhy_data, krw_data, hynix_data):
         chg_amt = latest["price"] - prev["price"]
         chg_pct = (chg_amt / abs(prev["price"])) * 100 if prev["price"] != 0 else 0
 
-        hist = [{"date": a["date"], "value": a["percent"]} for a in aligned][-60:]
+        hist = [{"date": a["date"], "value": a["percent"]} for a in aligned][-200:]
 
         meta = INDICATORS_META.get("SKHY_ADR_PREMIUM", {})
         return {

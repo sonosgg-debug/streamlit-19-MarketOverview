@@ -5,7 +5,8 @@ Preserves the exact content layout and dark Glassmorphism visual design.
 """
 
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+KST = timezone(timedelta(hours=9))
 from config import CATEGORIES, US_MARKET_TICKERS, K_MARKET_TICKERS, SEMI_MARKET_TICKERS
 from market_data import fetch_all_market_data
 from card_component import render_card_grid
@@ -108,11 +109,14 @@ section[data-testid="stSidebar"] h3 {
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
+    gap: 12px;
 }
 
 .price-container {
     display: flex;
     flex-direction: column;
+    flex-shrink: 0;
+    max-width: 48%;
 }
 
 .price-row {
@@ -141,6 +145,11 @@ section[data-testid="stSidebar"] h3 {
     transition: opacity 0.2s ease;
     position: relative;
     overflow: visible !important;
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-end;
+    width: 50%;
+    min-width: 165px;
 }
 
 .glass-card:hover .sparkline-container {
@@ -382,7 +391,7 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 # Data fetching with Streamlit caching (5 minutes TTL)
 @st.cache_data(ttl=300)
 def get_cached_market_data():
-    return fetch_all_market_data(), datetime.now()
+    return fetch_all_market_data(), datetime.now(KST)
 
 # Fetch Data
 all_data, fetch_time = get_cached_market_data()
@@ -426,39 +435,31 @@ with st.sidebar:
         st.session_state.active_sector = chosen_sector
         st.rerun()
 
-# Top Controls (Updated Time & Refresh Button on top-right)
-col_top_spacer, col_top_ctrl = st.columns([4, 1.2])
-with col_top_ctrl:
-    c_time, c_btn = st.columns([1.1, 1])
-    with c_time:
-        st.markdown(
-            f'<div style="text-align: right; font-size: 12.5px; color: #71717a; line-height: 38px;">'
-            f'Updated: <strong style="color: #d4d4d8;">{fetch_time.strftime("%H:%M:%S")}</strong>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-    with c_btn:
-        if st.button("🔄 Refresh", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
-
-# Centered Title, Dynamic Subtitle (Selected Sector), and Divider
+# Centered Title, Dynamic Subtitle (Selected Sector) with KST Updated Time
 active_sector = st.session_state.active_sector
 
 st.markdown(
-    f'<div style="text-align: center; margin-top: -10px; margin-bottom: 8px;">'
+    f'<div style="text-align: center; margin-top: -15px; margin-bottom: 8px;">'
     f'<h1 class="main-title" style="text-align: center; font-size: 30px; font-weight: 800; margin: 0 0 6px 0; color: #8AB4F8 !important; -webkit-text-fill-color: #8AB4F8 !important; letter-spacing: -0.02em;">'
     f'Daily Market Overview'
     f'</h1>'
-    f'<div style="text-align: center; font-size: 15px; font-weight: 500; color: #94a3b8; margin: 0;">'
-    f'{active_sector}'
+    f'<div style="text-align: center; font-size: 16px; margin: 0; display: flex; align-items: center; justify-content: center; gap: 8px;">'
+    f'<span style="color: #f1f5f9; font-weight: 600; font-size: 16px;">{active_sector}</span>'
+    f'<span style="font-size: 16px; color: #cbd5e1; font-weight: 500;">(Updated: {fetch_time.strftime("%Y-%m-%d %H:%M:%S")} KST)</span>'
     f'</div>'
     f'</div>',
     unsafe_allow_html=True
 )
 
+# Refresh Button under subtitle (aligned right)
+col_spacer, col_refresh = st.columns([7.2, 1.2])
+with col_refresh:
+    if st.button("🔄 Refresh", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+
 st.markdown(
-    '<hr style="border: 0; height: 1px; background-color: #334155; margin: 12px 0 20px 0;">',
+    '<hr style="border: 0; height: 1px; background-color: #334155; margin: 8px 0 18px 0;">',
     unsafe_allow_html=True
 )
 

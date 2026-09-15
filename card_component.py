@@ -41,13 +41,13 @@ def render_daily_candle_svg(o, h, l, c):
 
 
 def render_sparkline_svg(history, is_odd=True, is_int=False, is_percent=False):
-    """Generate inline SVG sparkline with 50% opacity interactive hover tooltip."""
+    """Generate inline SVG sparkline with 50% opacity interactive hover tooltip (200-day trend)."""
     if not history or len(history) < 2:
-        return '<div style="width:96px; height:44px; display:flex; align-items:center; justify-content:flex-end; font-size:11px; color:#71717a;">No data</div>'
+        return '<div style="width:165px; height:44px; display:flex; align-items:center; justify-content:flex-end; font-size:11px; color:#71717a;">No data</div>'
 
     valid_items = [h for h in history if h.get("value") is not None]
     if len(valid_items) < 2:
-        return '<div style="width:96px; height:44px; display:flex; align-items:center; justify-content:flex-end; font-size:11px; color:#71717a;">No data</div>'
+        return '<div style="width:165px; height:44px; display:flex; align-items:center; justify-content:flex-end; font-size:11px; color:#71717a;">No data</div>'
 
     values = [float(h["value"]) for h in valid_items]
     min_val = min(values)
@@ -56,8 +56,8 @@ def render_sparkline_svg(history, is_odd=True, is_int=False, is_percent=False):
     if val_range == 0:
         val_range = 1.0
 
-    width = 100.0
-    height = 42.0
+    width = 165.0
+    height = 44.0
     pad_y = 4.0
     avail_h = height - (pad_y * 2)
 
@@ -95,10 +95,10 @@ def render_sparkline_svg(history, is_odd=True, is_int=False, is_percent=False):
         # Tooltip box coordinate: width 74, height 30
         tip_w = 74.0
         tip_h = 30.0
-        if x > 42.0:
-            tx = max(-45.0, x - tip_w - 3.0)
+        if x > (width / 2.0):
+            tx = max(0.0, x - tip_w - 4.0)
         else:
-            tx = min(width - tip_w, x + 3.0)
+            tx = min(width - tip_w, x + 4.0)
         ty = -26.0
 
         # Hover group with hit rect, dashed line, dot, and 50% opacity tooltip
@@ -106,7 +106,7 @@ def render_sparkline_svg(history, is_odd=True, is_int=False, is_percent=False):
             f'<g class="sp-hover-group">'
             f'<rect class="sp-hover-hit" x="{x_start:.1f}" y="0" width="{x_w:.1f}" height="{height}" fill="transparent" />'
             f'<line class="sp-cross" x1="{x:.1f}" y1="0" x2="{x:.1f}" y2="{height}" stroke="rgba(255,255,255,0.25)" stroke-width="1" stroke-dasharray="2,2" />'
-            f'<circle class="sp-dot" cx="{x:.1f}" cy="{y:.1f}" r="2.8" fill="{stroke_color}" stroke="#ffffff" stroke-width="1.2" />'
+            f'<circle class="sp-dot" cx="{x:.1f}" cy="{y:.1f}" r="2.6" fill="{stroke_color}" stroke="#ffffff" stroke-width="1.2" />'
             f'<g class="sp-tip">'
             f'<rect x="{tx:.1f}" y="{ty:.1f}" width="{tip_w}" height="{tip_h}" rx="4" fill="#0f172a" fill-opacity="0.5" stroke="#38bdf8" stroke-opacity="0.55" stroke-width="1" />'
             f'<text x="{tx + tip_w/2.0:.1f}" y="{ty + 11.0:.1f}" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-family="-apple-system, sans-serif">{raw_date}</text>'
@@ -121,7 +121,7 @@ def render_sparkline_svg(history, is_odd=True, is_int=False, is_percent=False):
 
     return (
         f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" style="overflow: visible;">'
-        f'<path d="{path_data}" fill="none" stroke="{stroke_color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />'
+        f'<path d="{path_data}" fill="none" stroke="{stroke_color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />'
         f'{all_hover_html}'
         f'</svg>'
     )

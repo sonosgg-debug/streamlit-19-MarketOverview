@@ -64,9 +64,9 @@ def get_naver_futures():
     data_list = []
     headers = {"User-Agent": "Mozilla/5.0"}
     
-    # 1. Scrape history in parallel (11 pages)
-    pages = list(range(1, 12))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=11) as executor:
+    # 1. Scrape history in parallel (35 pages for up to ~200+ days)
+    pages = list(range(1, 35))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         contents = list(executor.map(lambda p: fetch_page(p, headers), pages))
         
     for content in contents:
@@ -171,8 +171,8 @@ def get_naver_futures():
             
     latest_hist_str = latest_hist_date.strftime("%Y-%m-%d")
     
-    df_60 = df.tail(60)
-    history_list = [{"date": dt.strftime("%Y-%m-%dT00:00:00.000Z"), "value": round(float(row["Close"]), 2)} for dt, row in df_60.iterrows()]
+    df_200 = df.tail(200)
+    history_list = [{"date": dt.strftime("%Y-%m-%dT00:00:00.000Z"), "value": round(float(row["Close"]), 2)} for dt, row in df_200.iterrows()]
     
     # Fallback quote_date_str if none parsed (only on weekdays after 9am)
     if quote_date_str is None:
@@ -188,8 +188,8 @@ def get_naver_futures():
             "date": datetime.strptime(quote_date_str, "%Y-%m-%d").strftime("%Y-%m-%dT00:00:00.000Z"),
             "value": price_val
         })
-        if len(history_list) > 60:
-            history_list = history_list[-60:]
+        if len(history_list) > 200:
+            history_list = history_list[-200:]
     elif quote_date_str == latest_hist_str:
         if history_list:
             history_list[-1]["value"] = price_val
@@ -320,7 +320,7 @@ def task_kofia_preload():
                 }
             new_dep_history = list(hist_map.values())
             new_dep_history.sort(key=lambda x: x['date'])
-            new_dep_history = new_dep_history[-100:]
+            new_dep_history = new_dep_history[-250:]
             with open(dep_path, "w", encoding="utf-8") as f:
                 json.dump(new_dep_history, f, indent=4)
         
@@ -335,7 +335,7 @@ def task_kofia_preload():
                 hist_map_liq[d_str] = val
             new_liq_history = [{"date": d, "liquidation": v} for d, v in hist_map_liq.items()]
             new_liq_history.sort(key=lambda x: x['date'])
-            new_liq_history = new_liq_history[-100:]
+            new_liq_history = new_liq_history[-250:]
             with open(liq_path, "w", encoding="utf-8") as f:
                 json.dump(new_liq_history, f, indent=4)
     except Exception as kofia_err:
@@ -348,10 +348,10 @@ def task_fundamentals(start_date, end_date):
         if df_fund is not None and not df_fund.empty:
             df_fund_filtered = df_fund[(df_fund['PER'] != 0) & (df_fund['PBR'] != 0)].copy()
             if len(df_fund_filtered) >= 2:
-                df_fund_60 = df_fund_filtered.tail(60)
+                df_fund_200 = df_fund_filtered.tail(200)
                 
                 # PER
-                per_history = [{"date": format_iso_date(dt), "value": round(float(row['PER']), 2)} for dt, row in df_fund_60.iterrows()]
+                per_history = [{"date": format_iso_date(dt), "value": round(float(row['PER']), 2)} for dt, row in df_fund_200.iterrows()]
                 latest_per = round(float(df_fund_filtered['PER'].iloc[-1]), 2)
                 prev_per = round(float(df_fund_filtered['PER'].iloc[-2]), 2)
                 per_change = round(latest_per - prev_per, 2)
@@ -365,7 +365,7 @@ def task_fundamentals(start_date, end_date):
                 }
                 
                 # PBR
-                pbr_history = [{"date": format_iso_date(dt), "value": round(float(row['PBR']), 2)} for dt, row in df_fund_60.iterrows()]
+                pbr_history = [{"date": format_iso_date(dt), "value": round(float(row['PBR']), 2)} for dt, row in df_fund_200.iterrows()]
                 latest_pbr = round(float(df_fund_filtered['PBR'].iloc[-1]), 2)
                 prev_pbr = round(float(df_fund_filtered['PBR'].iloc[-2]), 2)
                 pbr_change = round(latest_pbr - prev_pbr, 2)
@@ -414,7 +414,7 @@ def task_vkospi(start_date, end_date):
             low_p = round(float(str(latest.get('LWPRC_IDX', price)).replace(',', '')), 2)
             close_p = price
             
-            chronological = list(reversed(output))[-60:]
+            chronological = list(reversed(output))[-200:]
             history = [
                 {
                     "date": format_iso_date(row['TRD_DD']),
@@ -456,8 +456,8 @@ def task_ohlcv_rsi(start_date, end_date):
                 pass
             return None
             
-        pages = list(range(1, 16))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        pages = list(range(1, 35))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             contents = list(executor.map(fetch_naver_page, pages))
             
         for content in contents:
@@ -506,8 +506,8 @@ def task_ohlcv_rsi(start_date, end_date):
         val_series = val_series[val_series > 0].copy()
         
         if len(val_series) >= 2:
-            val_60 = val_series.tail(60)
-            history_val = [{"date": format_iso_date(dt), "value": round(float(val), 2)} for dt, val in val_60.items()]
+            val_200 = val_series.tail(200)
+            history_val = [{"date": format_iso_date(dt), "value": round(float(val), 2)} for dt, val in val_200.items()]
             latest_val = round(float(val_series.iloc[-1]), 2)
             prev_val = round(float(val_series.iloc[-2]), 2)
             val_change = round(latest_val - prev_val, 2)
@@ -530,8 +530,8 @@ def task_ohlcv_rsi(start_date, end_date):
             rsi_series = rsi_series.dropna()
             
             if len(rsi_series) >= 2:
-                rsi_60 = rsi_series.tail(60)
-                history_rsi = [{"date": format_iso_date(dt), "value": round(float(val), 2)} for dt, val in rsi_60.items()]
+                rsi_200 = rsi_series.tail(200)
+                history_rsi = [{"date": format_iso_date(dt), "value": round(float(val), 2)} for dt, val in rsi_200.items()]
                 latest_rsi = round(float(rsi_series.iloc[-1]), 2)
                 prev_rsi = round(float(rsi_series.iloc[-2]), 2)
                 rsi_change = round(latest_rsi - prev_rsi, 2)
@@ -556,10 +556,10 @@ def task_local_kofia_adr():
             with open(dep_path, "r", encoding="utf-8") as f:
                 dep_data = json.load(f)
             if dep_data and len(dep_data) >= 2:
-                dep_60 = dep_data[-60:]
+                dep_200 = dep_data[-200:]
                 
                 # Customer Deposits
-                dep_history = [{"date": format_iso_date(item['date']), "value": round(float(item['deposit']), 2)} for item in dep_60]
+                dep_history = [{"date": format_iso_date(item['date']), "value": round(float(item['deposit']), 2)} for item in dep_200]
                 latest_dep = round(float(dep_data[-1]['deposit']), 2)
                 prev_dep = round(float(dep_data[-2]['deposit']), 2)
                 dep_change = round(latest_dep - prev_dep, 2)
@@ -573,7 +573,7 @@ def task_local_kofia_adr():
                 }
                 
                 # Credit Balance
-                cred_history = [{"date": format_iso_date(item['date']), "value": round(float(item['credit']), 2)} for item in dep_60]
+                cred_history = [{"date": format_iso_date(item['date']), "value": round(float(item['credit']), 2)} for item in dep_200]
                 latest_cred = round(float(dep_data[-1]['credit']), 2)
                 prev_cred = round(float(dep_data[-2]['credit']), 2)
                 cred_change = round(latest_cred - prev_cred, 2)
@@ -592,8 +592,8 @@ def task_local_kofia_adr():
             with open(liq_path, "r", encoding="utf-8") as f:
                 liq_data = json.load(f)
             if liq_data and len(liq_data) >= 2:
-                liq_60 = liq_data[-60:]
-                liq_history = [{"date": format_iso_date(item['date']), "value": round(float(item['liquidation']), 2)} for item in liq_60]
+                liq_200 = liq_data[-200:]
+                liq_history = [{"date": format_iso_date(item['date']), "value": round(float(item['liquidation']), 2)} for item in liq_200]
                 latest_liq = round(float(liq_data[-1]['liquidation']), 2)
                 prev_liq = round(float(liq_data[-2]['liquidation']), 2)
                 liq_change = round(latest_liq - prev_liq, 2)
@@ -662,7 +662,7 @@ def task_local_kofia_adr():
                                 history.append({'date': parsed_date, 'adv': adv, 'dec': dec})
                             
                             history.sort(key=lambda x: x['date'])
-                            history = history[-100:]
+                            history = history[-250:]
                             with open(adr_path, "w", encoding="utf-8") as f:
                                 json.dump(history, f, indent=4)
         except Exception as adr_up_err:
@@ -685,8 +685,8 @@ def task_local_kofia_adr():
                         "value": round(val, 2)
                     })
                 if len(adr_computed) >= 2:
-                    adr_60 = adr_computed[-60:]
-                    adr_history = [{"date": format_iso_date(item['date']), "value": item['value']} for item in adr_60]
+                    adr_200 = adr_computed[-200:]
+                    adr_history = [{"date": format_iso_date(item['date']), "value": item['value']} for item in adr_200]
                     latest_adr = adr_computed[-1]['value']
                     prev_adr = adr_computed[-2]['value']
                     adr_change = round(latest_adr - prev_adr, 2)
@@ -751,8 +751,8 @@ def task_night_futures(futures_price_ref):
 
                 last_hist_date = night_data[-1]['date']
                 
-                night_60 = night_data[-60:]
-                night_history = [{"date": format_iso_date(item['date']), "value": round(float(item['price']), 2)} for item in night_60]
+                night_200 = night_data[-200:]
+                night_history = [{"date": format_iso_date(item['date']), "value": round(float(item['price']), 2)} for item in night_200]
                 
                 if futures_price_ref is None:
                     try:
@@ -771,8 +771,8 @@ def task_night_futures(futures_price_ref):
                     if session_date_str and session_date_str > last_hist_date:
                         prev_price = latest_night_from_file
                         night_history.append({"date": format_iso_date(session_date_str), "value": round(current_price, 2)})
-                        if len(night_history) > 60:
-                            night_history = night_history[-60:]
+                        if len(night_history) > 200:
+                            night_history = night_history[-200:]
                     elif session_date_str == last_hist_date:
                         prev_price = round(float(night_data[-2]['price']), 2) if len(night_data) >= 2 else latest_night_from_file
                         night_history[-1]['value'] = round(current_price, 2)
@@ -803,7 +803,7 @@ def task_night_futures(futures_price_ref):
 def main():
     try:
         today = datetime.now()
-        start_date = (today - timedelta(days=120)).strftime("%Y%m%d")
+        start_date = (today - timedelta(days=365)).strftime("%Y%m%d")
         end_date = today.strftime("%Y%m%d")
         
         result = {}
