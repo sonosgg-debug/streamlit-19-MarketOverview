@@ -1,0 +1,7 @@
+streamlit>=1.30.0
+yfinance>=0.2.35
+requests>=2.31.0
+pandas>=2.0.0
+beautifulsoup4>=4.12.0
+pykrx>=1.0.45
+python-dotenv>=1.0.0

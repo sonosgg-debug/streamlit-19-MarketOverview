@@ -1,0 +1,505 @@
+"""
+Streamlit Market Overview Dashboard
+Ultra-lightweight, 100% Python-based implementation of MarketOverview
+Preserves the exact content layout and dark Glassmorphism visual design.
+"""
+
+import streamlit as st
+from datetime import datetime
+from config import CATEGORIES, US_MARKET_TICKERS, K_MARKET_TICKERS, SEMI_MARKET_TICKERS
+from market_data import fetch_all_market_data
+from card_component import render_card_grid
+
+# Page config
+st.set_page_config(
+    page_title="Market Overview",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for Glassmorphism & Dark Theme
+CUSTOM_CSS = """
+<style>
+/* Base Dark Background */
+.stApp {
+    background-color: #09090b !important;
+    color: #f4f4f5 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Hide Streamlit Header & Footer */
+header[data-testid="stHeader"] {
+    background: transparent !important;
+}
+footer {
+    display: none !important;
+}
+
+/* Main Dashboard Title (00 Bookmarks #8AB4F8 Soft Sky Blue) */
+h1, .main-title, [data-testid="stMarkdownContainer"] h1 {
+    color: #8AB4F8 !important;
+    -webkit-text-fill-color: #8AB4F8 !important;
+    font-weight: 800 !important;
+}
+
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 {
+    color: #f8fafc !important;
+    -webkit-text-fill-color: #f8fafc !important;
+}
+
+/* Glassmorphism Card Grid */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 18px;
+    margin-top: 14px;
+    margin-bottom: 24px;
+}
+
+/* Glassmorphism Card */
+.glass-card {
+    background: rgba(24, 24, 27, 0.7) !important;
+    backdrop-filter: blur(12px) !important;
+    -webkit-backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 12px !important;
+    padding: 18px 20px !important;
+    min-height: 145px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+    position: relative !important;
+    overflow: hidden !important;
+}
+
+.glass-card:hover {
+    transform: translateY(-4px) !important;
+    border-color: rgba(255, 255, 255, 0.18) !important;
+    box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.6) !important;
+    background: rgba(30, 30, 34, 0.85) !important;
+}
+
+/* Card Header */
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+}
+
+.card-title {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: #a1a1aa;
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 95%;
+}
+
+/* Card Body */
+.card-body {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+}
+
+.price-container {
+    display: flex;
+    flex-direction: column;
+}
+
+.price-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.price-value {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: #fafafa;
+}
+
+.change-row {
+    display: flex;
+    align-items: center;
+    font-size: 13.5px;
+    font-weight: 500;
+    margin-top: 4px;
+}
+
+.sparkline-container {
+    opacity: 0.9;
+    transition: opacity 0.2s ease;
+    position: relative;
+    overflow: visible !important;
+}
+
+.glass-card:hover .sparkline-container {
+    opacity: 1;
+}
+
+/* Sparkline Interactive Tooltip & Crosshair */
+.sp-hover-group {
+    cursor: crosshair;
+}
+
+.sp-hover-hit {
+    pointer-events: all !important;
+}
+
+.sp-hover-group .sp-tip,
+.sp-hover-group .sp-cross,
+.sp-hover-group .sp-dot {
+    display: none;
+    pointer-events: none !important;
+}
+
+.sp-hover-group:hover .sp-tip,
+.sp-hover-group:hover .sp-cross,
+.sp-hover-group:hover .sp-dot {
+    display: block !important;
+}
+
+/* Tabs Styling */
+div[data-baseweb="tab-list"] {
+    gap: 8px;
+    background-color: transparent !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+    padding-bottom: 6px;
+    margin-bottom: 12px;
+}
+
+button[data-baseweb="tab"] {
+    border-radius: 8px !important;
+    color: #a1a1aa !important;
+    padding: 8px 18px !important;
+    font-weight: 500 !important;
+    font-size: 15px !important;
+    background: transparent !important;
+    border: none !important;
+    transition: all 0.15s ease !important;
+}
+
+button[data-baseweb="tab"]:hover {
+    color: #ffffff !important;
+    background: rgba(255, 255, 255, 0.05) !important;
+}
+
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: #38bdf8 !important;
+    background: rgba(56, 189, 248, 0.12) !important;
+    font-weight: 600 !important;
+}
+
+div[data-baseweb="tab-highlight"] {
+    background-color: #38bdf8 !important;
+    height: 2px !important;
+}
+
+/* Streamlit Button Styling */
+div.stButton > button {
+    background: rgba(255, 255, 255, 0.06) !important;
+    color: #e4e4e7 !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 8px !important;
+    padding: 6px 14px !important;
+    font-size: 13.5px !important;
+    transition: all 0.2s ease !important;
+}
+
+div.stButton > button:hover {
+    background: rgba(255, 255, 255, 0.12) !important;
+    border-color: rgba(255, 255, 255, 0.25) !important;
+    color: #ffffff !important;
+}
+
+/* Sidebar Container */
+section[data-testid="stSidebar"] {
+    background-color: #0d1117 !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+section[data-testid="stSidebar"] > div {
+    padding-top: 1.5rem !important;
+}
+
+/* =========================================================
+   사이드바 접기(<<) 및 펼치기(>>) 버튼 항상 표시 및 시인성/대비 강화 (00 Bookmarks 스타일)
+   ========================================================= */
+/* 1. 사이드바가 열려 있을 때 접기 버튼 (<<) 상시 표시 */
+[data-testid="stSidebarCollapseButton"] {
+    visibility: visible !important;
+    opacity: 1 !important;
+    display: inline-flex !important;
+}
+
+[data-testid="stSidebarCollapseButton"] button {
+    visibility: visible !important;
+    opacity: 1 !important;
+    background-color: #1e293b !important;       /* 진한 네이비 배경 */
+    border: 1.5px solid #38bdf8 !important;     /* 선명한 스카이블루 테두리로 상자 명확화 */
+    border-radius: 8px !important;
+    width: 38px !important;
+    height: 38px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 6px rgba(56, 189, 248, 0.2) !important;
+    transition: all 0.2s ease !important;
+}
+
+/* 상자 내부의 << 아이콘(Material Icon span/svg/문자)을 순백색으로 강제하여 상자와 극명한 대비 구현 */
+[data-testid="stSidebarCollapseButton"] button *,
+[data-testid="stSidebarCollapseButton"] span,
+[data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"],
+[data-testid="stSidebarCollapseButton"] svg {
+    color: #ffffff !important;
+    fill: #ffffff !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    font-size: 1.35rem !important;
+    font-weight: 700 !important;
+}
+
+/* 호버(PC) 및 터치 시 반전 효과 */
+[data-testid="stSidebarCollapseButton"] button:hover {
+    background-color: #38bdf8 !important;
+    border-color: #38bdf8 !important;
+}
+[data-testid="stSidebarCollapseButton"] button:hover * {
+    color: #0f172a !important;
+    fill: #0f172a !important;
+}
+
+/* 2. 사이드바 헤더 영역 패딩 및 정렬 보정 */
+[data-testid="stSidebarHeader"] {
+    padding-top: 0.5rem !important;
+    padding-bottom: 0.5rem !important;
+}
+
+/* 3. 사이드바가 닫혔을 때 다시 여는 버튼 (>>) 시인성 강화 */
+[data-testid="stSidebarCollapsedControl"] {
+    visibility: visible !important;
+    opacity: 1 !important;
+    display: block !important;
+    z-index: 999999 !important;
+}
+
+[data-testid="stSidebarCollapsedControl"] button {
+    background-color: #1e293b !important;
+    border: 1.5px solid #38bdf8 !important;
+    border-radius: 8px !important;
+    width: 38px !important;
+    height: 38px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 6px rgba(56, 189, 248, 0.2) !important;
+    transition: all 0.2s ease !important;
+}
+
+[data-testid="stSidebarCollapsedControl"] button *,
+[data-testid="stSidebarCollapsedControl"] span,
+[data-testid="stSidebarCollapsedControl"] [data-testid="stIconMaterial"],
+[data-testid="stSidebarCollapsedControl"] svg {
+    color: #38bdf8 !important;
+    fill: #38bdf8 !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    font-size: 1.35rem !important;
+}
+
+[data-testid="stSidebarCollapsedControl"] button:hover {
+    background-color: #38bdf8 !important;
+    border-color: #38bdf8 !important;
+}
+
+[data-testid="stSidebarCollapsedControl"] button:hover * {
+    color: #0f172a !important;
+    fill: #0f172a !important;
+}
+
+/* Sidebar Radio Buttons Styling */
+section[data-testid="stSidebar"] div[role="radiogroup"] {
+    gap: 8px !important;
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"] label {
+    background: rgba(255, 255, 255, 0.04) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 8px !important;
+    padding: 10px 14px !important;
+    transition: all 0.2s ease !important;
+    width: 100% !important;
+    cursor: pointer !important;
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-color: rgba(56, 189, 248, 0.4) !important;
+}
+
+section[data-testid="stSidebar"] div[role="radiogroup"] label[data-checked="true"],
+section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {
+    background: rgba(56, 189, 248, 0.12) !important;
+    border-color: #38bdf8 !important;
+}
+
+/* Sidebar Primary Button (조회 버튼) */
+section[data-testid="stSidebar"] button[kind="primary"],
+section[data-testid="stSidebar"] .stButton > button {
+    background: linear-gradient(135deg, #0284c7, #0369a1) !important;
+    border: 1px solid #38bdf8 !important;
+    color: #ffffff !important;
+    font-weight: 600 !important;
+    font-size: 14.5px !important;
+    padding: 8px 16px !important;
+    border-radius: 8px !important;
+    box-shadow: 0 4px 12px rgba(2, 132, 199, 0.3) !important;
+    transition: all 0.2s ease !important;
+}
+
+section[data-testid="stSidebar"] button[kind="primary"]:hover,
+section[data-testid="stSidebar"] .stButton > button:hover {
+    background: linear-gradient(135deg, #38bdf8, #0284c7) !important;
+    border-color: #7dd3fc !important;
+    box-shadow: 0 6px 18px rgba(56, 189, 248, 0.4) !important;
+    transform: translateY(-1px) !important;
+}
+</style>
+"""
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+# Data fetching with Streamlit caching (5 minutes TTL)
+@st.cache_data(ttl=300)
+def get_cached_market_data():
+    return fetch_all_market_data(), datetime.now()
+
+# Fetch Data
+all_data, fetch_time = get_cached_market_data()
+
+# Session state for sector selection
+if "selected_sector" not in st.session_state:
+    st.session_state.selected_sector = "US Market"
+if "active_sector" not in st.session_state:
+    st.session_state.active_sector = "US Market"
+
+# Sidebar: Market and Sector Selection
+SECTOR_OPTIONS = ["US Market", "K Market", "Semiconductor"]
+
+with st.sidebar:
+    st.markdown(
+        '<div style="padding: 4px 0 16px 0;">'
+        '<div style="font-size: 17px; font-weight: 700; color: #f8fafc; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px;">'
+        '<span>📊</span> 시장 및 섹터 선택'
+        '</div>'
+        '<div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">'
+        '조회할 시장 또는 섹터를 선택하세요.'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    current_idx = SECTOR_OPTIONS.index(st.session_state.selected_sector) if st.session_state.selected_sector in SECTOR_OPTIONS else 0
+
+    chosen_sector = st.radio(
+        "시장 및 섹터 선택",
+        options=SECTOR_OPTIONS,
+        index=current_idx,
+        key="sector_radio_select",
+        label_visibility="collapsed"
+    )
+    st.session_state.selected_sector = chosen_sector
+
+    st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+
+    if st.button("조회", type="primary", use_container_width=True):
+        st.session_state.active_sector = chosen_sector
+        st.rerun()
+
+# Top Controls (Updated Time & Refresh Button on top-right)
+col_top_spacer, col_top_ctrl = st.columns([4, 1.2])
+with col_top_ctrl:
+    c_time, c_btn = st.columns([1.1, 1])
+    with c_time:
+        st.markdown(
+            f'<div style="text-align: right; font-size: 12.5px; color: #71717a; line-height: 38px;">'
+            f'Updated: <strong style="color: #d4d4d8;">{fetch_time.strftime("%H:%M:%S")}</strong>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+    with c_btn:
+        if st.button("🔄 Refresh", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+
+# Centered Title, Dynamic Subtitle (Selected Sector), and Divider
+active_sector = st.session_state.active_sector
+
+st.markdown(
+    f'<div style="text-align: center; margin-top: -10px; margin-bottom: 8px;">'
+    f'<h1 class="main-title" style="text-align: center; font-size: 30px; font-weight: 800; margin: 0 0 6px 0; color: #8AB4F8 !important; -webkit-text-fill-color: #8AB4F8 !important; letter-spacing: -0.02em;">'
+    f'Daily Market Overview'
+    f'</h1>'
+    f'<div style="text-align: center; font-size: 15px; font-weight: 500; color: #94a3b8; margin: 0;">'
+    f'{active_sector}'
+    f'</div>'
+    f'</div>',
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    '<hr style="border: 0; height: 1px; background-color: #334155; margin: 12px 0 20px 0;">',
+    unsafe_allow_html=True
+)
+
+def build_tab_cards(ticker_list):
+    items_with_index = []
+    for idx, ticker in enumerate(ticker_list, start=1):
+        item = all_data.get(ticker)
+        if item:
+            items_with_index.append((item, idx))
+        else:
+            # Placeholder for missing ticker
+            items_with_index.append(({
+                "ticker": ticker,
+                "name": ticker,
+                "price": None,
+                "change_amt": None,
+                "change_percent": None,
+                "history": [],
+                "open": None, "high": None, "low": None, "close": None,
+                "negative_favorable": False,
+                "is_integer_only": False,
+                "is_percent": False
+            }, idx))
+    return render_card_grid(items_with_index)
+
+# Render cards according to active_sector
+active_sector = st.session_state.active_sector
+
+if active_sector == "US Market":
+    target_tickers = US_MARKET_TICKERS
+elif active_sector == "K Market":
+    target_tickers = K_MARKET_TICKERS
+else:
+    target_tickers = SEMI_MARKET_TICKERS
+
+cards_html = build_tab_cards(target_tickers)
+st.markdown(cards_html, unsafe_allow_html=True)
+
+# Bottom Horizontal Divider
+st.markdown(
+    '<hr style="border: 0; height: 1px; background-color: #334155; margin: 24px 0 28px 0;">',
+    unsafe_allow_html=True
+)
+
