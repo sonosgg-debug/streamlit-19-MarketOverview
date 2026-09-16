@@ -23,11 +23,28 @@ except Exception:
     pass
 
 # Load KRX environment variables
-# Load from workspace root .env first, then fallback to D:\AI Investing\KRXdata\.env
+# Load from workspace root .env first, then fallback to D:\AI Investing\KRXdata\.env or 00 API Key
 load_dotenv()
 krx_env_path = r"D:\AI Investing\KRXdata\.env"
 if os.path.exists(krx_env_path):
     load_dotenv(krx_env_path)
+
+if not os.getenv("KRX_ID") or not os.getenv("KRX_PW"):
+    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    api_key_path = os.path.join(parent_dir, "00 API Key", "KRX ID&PW.txt")
+    if not os.path.exists(api_key_path):
+        api_key_path = r"D:\AI Investing\00 API Key\KRX ID&PW.txt"
+    if os.path.exists(api_key_path):
+        try:
+            with open(api_key_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("ID :") or line.startswith("ID:"):
+                        os.environ["KRX_ID"] = line.split(":", 1)[1].strip()
+                    elif line.startswith("PW :") or line.startswith("PW:"):
+                        os.environ["KRX_PW"] = line.split(":", 1)[1].strip()
+        except Exception:
+            pass
 
 try:
     from pykrx import stock

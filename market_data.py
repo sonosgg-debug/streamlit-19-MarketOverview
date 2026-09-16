@@ -19,6 +19,27 @@ from config import INDICATORS_META, INTEGER_ONLY_TICKERS
 _krx_update_lock = threading.Lock()
 _krx_updating = False
 
+def load_krx_auth():
+    """Load KRX credentials from workspace or 00 API Key folder."""
+    if not os.getenv("KRX_ID") or not os.getenv("KRX_PW"):
+        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        api_key_path = os.path.join(parent_dir, "00 API Key", "KRX ID&PW.txt")
+        if not os.path.exists(api_key_path):
+            api_key_path = r"D:\AI Investing\00 API Key\KRX ID&PW.txt"
+        if os.path.exists(api_key_path):
+            try:
+                with open(api_key_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("ID :") or line.startswith("ID:"):
+                            os.environ["KRX_ID"] = line.split(":", 1)[1].strip()
+                        elif line.startswith("PW :") or line.startswith("PW:"):
+                            os.environ["KRX_PW"] = line.split(":", 1)[1].strip()
+            except Exception:
+                pass
+
+load_krx_auth()
+
 def trigger_krx_background_update(wait=False):
     """Trigger get_kospi_fundamentals.py in background (or synchronously if wait=True) if cache is stale or requested."""
     global _krx_updating
@@ -310,6 +331,107 @@ def fetch_kospi_trade_value(existing_item=None):
         print(f"Error fetching KOSPI trade value: {e}")
     return existing_item
 
+def fetch_vkospi_direct(existing_item=None):
+    """Fetch live VKOSPI from KRX MDCSTAT01201 using PyKRX."""
+    try:
+        load_krx_auth()
+        from pykrx.website.krx.krxio import KrxWebIo
+
+        class KrxMdc(KrxWebIo):
+            @property
+            def bld(self):
+                return 'dbms/MDC/STAT/standard/MDCSTAT01201'
+
+        today = datetime.now()
+        start_date = (today - timedelta(days=30)).strftime("%Y%m%d")
+        end_date = today.strftime("%Y%m%d")
+
+        krx = KrxMdc()
+        res = krx.read(
+            locale='ko_KR',
+            indTpCd='1',
+            idxIndCd='300',
+            strtDd=start_date,
+            endDd=end_date,
+            share='1',
+            money='1'
+        )
+        output = res.get('output', [])
+        if output and len(output) >= 2:
+            latest = output[0]
+            prev = output[1]
+            price = round(float(str(latest['CLSPRC_IDX']).replace(',', '')), 2)
+            prev_price = round(float(str(prev['CLSPRC_IDX']).replace(',', '')), 2)
+            change = round(price - prev_price, 2)
+            pct = round((change / prev_price) * 100, 2) if prev_price != 0 else 0.0
+
+            open_p = round(float(str(latest.get('OPNPRC_IDX', price)).replace(',', '')), 2)
+            high_p = round(float(str(latest.get('HGPRC_IDX', price)).replace(',', '')), 2)
+            low_p = round(float(str(latest.get('LWPRC_IDX', price)).replace(',', '')), 2)
+
+            new_hist = []
+            for row in reversed(output):
+                d_str = str(row.get('TRD_DD', '')).strip().replace('/', '-')
+                if len(d_str) == 8 and '-' not in d_str:
+                    d_fmt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
+                else:
+                    d_fmt = d_str
+                if len(d_fmt) == 10:
+                    new_hist.append({"date": d_fmt, "value": round(float(str(row['CLSPRC_IDX']).replace(',', '')), 2)})
+
+            if existing_item and existing_item.get("history"):
+                hist_map = {h["date"]: h["value"] for h in existing_item["history"]}
+                for nh in new_hist:
+                    hist_map[nh["date"]] = nh["value"]
+                sorted_dates = sorted(hist_map.keys())
+                final_hist = [{"date": d, "value": hist_map[d]} for d in sorted_dates][-200:]
+            else:
+                final_hist = new_hist[-200:]
+
+            meta = INDICATORS_META.get("VKOSPI", {})
+            result_item = {
+                "ticker": "VKOSPI",
+                "name": meta.get("name", "KOSPI200 변동성지수"),
+                "price": price,
+                "change_amt": change,
+                "change_percent": pct,
+                "open": open_p,
+                "high": high_p,
+                "low": low_p,
+                "close": price,
+                "history": final_hist,
+                "negative_favorable": meta.get("negative_favorable", True),
+                "is_integer_only": False,
+                "is_percent": False
+            }
+
+            # Update local krx_cache.json on disk if available
+            try:
+                cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
+                if os.path.exists(cache_path):
+                    with open(cache_path, "r", encoding="utf-8") as f:
+                        c_data = json.load(f)
+                    if isinstance(c_data, dict):
+                        c_data["vkospi"] = {
+                            "price": price,
+                            "changeAmt": change,
+                            "changePercent": pct,
+                            "open": open_p,
+                            "high": high_p,
+                            "low": low_p,
+                            "close": price,
+                            "history": [{"date": f"{h['date']}T00:00:00.000Z", "value": h["value"]} for h in final_hist]
+                        }
+                        with open(cache_path, "w", encoding="utf-8") as f:
+                            json.dump(c_data, f, indent=2, ensure_ascii=False)
+            except Exception:
+                pass
+
+            return result_item
+    except Exception as e:
+        print(f"Error fetching VKOSPI: {e}")
+    return existing_item
+
 def fetch_yahoo_bulk(tickers):
     """Fetch daily OHLCV and history for multiple tickers via yfinance (up to 200 trading days)."""
     results = {}
@@ -380,7 +502,7 @@ def fetch_all_market_data(force_refresh=False, wait_for_krx=False):
     """Fetch and aggregate all indicators across US, K-Market, and Semiconductor tabs."""
     all_data = {}
 
-    # 1. KRX Cache Data (provides KOFIA deposits/credit/margin_call, VKOSPI, Night Futures, PER, PBR, ADR)
+    # 1. KRX Cache Data (provides KOFIA deposits/credit/margin_call, Night Futures, PER, PBR, ADR)
     krx_data = get_krx_cache_data(force_update=force_refresh, wait=wait_for_krx)
     all_data.update(krx_data)
 
@@ -389,17 +511,23 @@ def fetch_all_market_data(force_refresh=False, wait_for_krx=False):
     if fg_data:
         all_data["FEAR_GREED"] = fg_data
 
-    # 3. Korean stocks, indices, and KOSPI200 Futures via Naver Mobile API (live and independent of cache)
+    # 3. Korean stocks, indices, and KOSPI200 Futures via Naver Mobile API (live) & VKOSPI via KRX MDC
     korean_tickers = [
         "005930.KS", "009150.KS", "402340.KS", "000660.KS",
         "^KS11", "^KQ11", "KOSPI200_FUTURES"
     ]
-    with ThreadPoolExecutor(max_workers=7) as executor:
-        naver_results = list(executor.map(fetch_naver_price, korean_tickers))
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        fut_naver = executor.map(fetch_naver_price, korean_tickers)
+        fut_vkospi = executor.submit(fetch_vkospi_direct, all_data.get("VKOSPI"))
+        naver_results = list(fut_naver)
+        vk_item = fut_vkospi.result()
 
     for item in naver_results:
         if item:
             all_data[item["ticker"]] = item
+
+    if vk_item:
+        all_data["VKOSPI"] = vk_item
 
     # 3b. Compute KOSPI RSI dynamically from live KOSPI (^KS11) daily close history
     ks11_item = all_data.get("^KS11")
