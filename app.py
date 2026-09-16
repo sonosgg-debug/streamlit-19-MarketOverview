@@ -388,13 +388,21 @@ section[data-testid="stSidebar"] .stButton > button:hover {
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-# Data fetching with Streamlit caching (5 minutes TTL)
-@st.cache_data(ttl=300)
-def get_cached_market_data():
+# Data fetching with Streamlit caching (3 minutes TTL)
+@st.cache_data(ttl=180)
+def get_cached_market_data(cache_token=0):
     return fetch_all_market_data(), datetime.now(KST)
 
+# Token to allow explicit cache invalidation
+if "cache_token" not in st.session_state:
+    st.session_state.cache_token = 0
+
 # Fetch Data
-all_data, fetch_time = get_cached_market_data()
+all_data, fetch_time = get_cached_market_data(st.session_state.cache_token)
+
+# Show toast if just refreshed
+if st.session_state.pop("just_refreshed", False):
+    st.toast("최신 시장 데이터로 갱신되었습니다.", icon="✅")
 
 # Session state for sector selection
 if "selected_sector" not in st.session_state:
@@ -432,11 +440,29 @@ with st.sidebar:
     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
     if st.button("조회", type="primary", use_container_width=True):
+        if st.session_state.active_sector == chosen_sector:
+            st.cache_data.clear()
+            st.session_state.cache_token += 1
+            st.session_state["just_refreshed"] = True
         st.session_state.active_sector = chosen_sector
         st.rerun()
 
 # Centered Title, Dynamic Subtitle (Selected Sector) with KST Updated Time
 active_sector = st.session_state.active_sector
+
+market_note = ""
+if active_sector == "US Market":
+    market_note = (
+        '<div style="text-align: center; font-size: 12.5px; color: #94a3b8; margin-top: 4px;">'
+        '* 미국 주식 정규장(22:30~05:00 KST) 개장 전에는 직전 영업일 공식 마감 종가가 표시됩니다. (선물·국채·유가·VIX는 실시간 반영)'
+        '</div>'
+    )
+elif active_sector == "Semiconductor":
+    market_note = (
+        '<div style="text-align: center; font-size: 12.5px; color: #94a3b8; margin-top: 4px;">'
+        '* 국내 반도체 종목은 당일 정규장 마감 가격이며, 미국 반도체 종목은 개장 전 직전 영업일 종가 기준입니다.'
+        '</div>'
+    )
 
 st.markdown(
     f'<div style="text-align: center; margin-top: -15px; margin-bottom: 8px;">'
@@ -447,6 +473,7 @@ st.markdown(
     f'<span style="color: #f1f5f9; font-weight: 600; font-size: 16px;">{active_sector}</span>'
     f'<span style="font-size: 16px; color: #cbd5e1; font-weight: 500;">(Updated: {fetch_time.strftime("%Y-%m-%d %H:%M:%S")} KST)</span>'
     f'</div>'
+    f'{market_note}'
     f'</div>',
     unsafe_allow_html=True
 )
@@ -456,6 +483,8 @@ col_spacer, col_refresh = st.columns([7.2, 1.2])
 with col_refresh:
     if st.button("🔄 Refresh", use_container_width=True):
         st.cache_data.clear()
+        st.session_state.cache_token += 1
+        st.session_state["just_refreshed"] = True
         st.rerun()
 
 st.markdown(

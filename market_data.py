@@ -13,13 +13,14 @@ from datetime import datetime, timedelta
 import pandas as pd
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
+from bs4 import BeautifulSoup
 from config import INDICATORS_META, INTEGER_ONLY_TICKERS
 
 _krx_update_lock = threading.Lock()
 _krx_updating = False
 
-def trigger_krx_background_update():
-    """Trigger get_kospi_fundamentals.py in background if cache is stale or requested."""
+def trigger_krx_background_update(wait=False):
+    """Trigger get_kospi_fundamentals.py in background (or synchronously if wait=True) if cache is stale or requested."""
     global _krx_updating
     with _krx_update_lock:
         if _krx_updating:
@@ -38,8 +39,11 @@ def trigger_krx_background_update():
             with _krx_update_lock:
                 _krx_updating = False
 
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
+    if wait:
+        _worker()
+    else:
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
 
 def get_fear_and_greed():
     """Fetch CNN Fear & Greed Index score and historical data."""
@@ -80,21 +84,22 @@ def get_fear_and_greed():
         print(f"Error fetching Fear & Greed: {e}")
     return None
 
-def get_krx_cache_data():
-    """Read data from local krx_cache.json if available and trigger background refresh if stale."""
+def get_krx_cache_data(force_update=False, wait=False):
+    """Read data from local krx_cache.json if available and trigger refresh if stale or forced."""
     cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
 
-    # Check staleness: if older than 4 hours or doesn't exist, trigger background update
-    if not os.path.exists(cache_path):
-        trigger_krx_background_update()
+    if force_update:
+        trigger_krx_background_update(wait=wait)
+    elif not os.path.exists(cache_path):
+        trigger_krx_background_update(wait=wait)
         return {}
-
-    try:
-        mtime = datetime.fromtimestamp(os.path.getmtime(cache_path))
-        if (datetime.now() - mtime).total_seconds() > 14400:
-            trigger_krx_background_update()
-    except Exception:
-        pass
+    else:
+        try:
+            mtime = datetime.fromtimestamp(os.path.getmtime(cache_path))
+            if (datetime.now() - mtime).total_seconds() > 14400:
+                trigger_krx_background_update(wait=wait)
+        except Exception:
+            pass
 
     try:
         with open(cache_path, "r", encoding="utf-8") as f:
@@ -150,18 +155,25 @@ def get_krx_cache_data():
         return {}
 
 def fetch_naver_price(ticker):
-    """Fetch recent price data for Korean stocks and indexes using Naver Mobile API (up to 200 trading days)."""
+    """Fetch recent price data for Korean stocks, indices, and futures using Naver Mobile API (up to 200 trading days)."""
     try:
-        naver_code = ticker.replace(".KS", "").replace(".KQ", "")
         if ticker == "^KS11":
+            url_type = "index"
             naver_code = "KOSPI"
         elif ticker == "^KQ11":
+            url_type = "index"
             naver_code = "KOSDAQ"
+        elif ticker == "KOSPI200_FUTURES":
+            url_type = "index"
+            naver_code = "FUT"
+        else:
+            url_type = "stock"
+            naver_code = ticker.replace(".KS", "").replace(".KQ", "")
 
         headers = {"User-Agent": "Mozilla/5.0"}
         raw_items = []
         for p in range(1, 5):
-            url = f"https://m.stock.naver.com/api/stock/{naver_code}/price?pageSize=60&page={p}"
+            url = f"https://m.stock.naver.com/api/{url_type}/{naver_code}/price?pageSize=60&page={p}"
             res = requests.get(url, headers=headers, timeout=4)
             if res.status_code == 200:
                 p_data = res.json()
@@ -179,7 +191,15 @@ def fetch_naver_price(ticker):
             high_val = float(latest["highPrice"].replace(",", ""))
             low_val = float(latest["lowPrice"].replace(",", ""))
             change_amt = float(latest["compareToPreviousClosePrice"].replace(",", ""))
+
+            # Adjust sign based on compareToPreviousPrice direction
+            cmp_price = latest.get("compareToPreviousPrice", {})
+            if isinstance(cmp_price, dict) and cmp_price.get("name") == "FALLING":
+                if change_amt > 0:
+                    change_amt = -change_amt
             change_pct = float(latest["fluctuationsRatio"].replace(",", ""))
+            if change_amt < 0 and change_pct > 0:
+                change_pct = -change_pct
 
             # History in chronological order (up to 200)
             history = [
@@ -203,9 +223,92 @@ def fetch_naver_price(ticker):
                 "is_integer_only": ticker in INTEGER_ONLY_TICKERS,
                 "is_percent": False
             }
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Error fetching Naver price for {ticker}: {e}")
     return None
+
+def compute_kospi_rsi(ks11_item):
+    """Dynamically compute 14-day RSI for KOSPI using closing history."""
+    if not ks11_item or not ks11_item.get("history"):
+        return None
+    hist = ks11_item["history"]
+    if len(hist) < 15:
+        return None
+    closes = pd.Series([h["value"] for h in hist], index=[h["date"] for h in hist])
+    delta = closes.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    rsi_series = (100 - (100 / (1 + rs))).dropna()
+    if len(rsi_series) < 2:
+        return None
+    latest_rsi = round(float(rsi_series.iloc[-1]), 2)
+    prev_rsi = round(float(rsi_series.iloc[-2]), 2)
+    change_amt = round(latest_rsi - prev_rsi, 2)
+    change_pct = round((change_amt / prev_rsi) * 100, 2) if prev_rsi != 0 else 0.0
+    rsi_hist = [{"date": d, "value": round(float(v), 2)} for d, v in rsi_series.items()][-200:]
+    meta = INDICATORS_META.get("KOSPI_RSI", {})
+    return {
+        "ticker": "KOSPI_RSI",
+        "name": meta.get("name", "KOSPI RSI(14, %)"),
+        "price": latest_rsi,
+        "change_amt": change_amt,
+        "change_percent": change_pct,
+        "open": None, "high": None, "low": None, "close": latest_rsi,
+        "history": rsi_hist,
+        "negative_favorable": meta.get("negative_favorable", False),
+        "is_integer_only": False,
+        "is_percent": False
+    }
+
+def fetch_kospi_trade_value(existing_item=None):
+    """Fetch recent KOSPI trading value from Naver Finance table."""
+    try:
+        url = "https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page=1"
+        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=4)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.content.decode("euc-kr", "replace"), "html.parser")
+            tbl = soup.find("table", class_="type_1")
+            if tbl:
+                rows = []
+                for tr in tbl.find_all("tr"):
+                    cols = [td.text.strip() for td in tr.find_all("td") if td.text.strip()]
+                    if len(cols) >= 6 and "." in cols[0]:
+                        d_str = cols[0].replace(".", "-")
+                        val_raw = float(cols[5].replace(",", "")) / 100.0  # 백만원 -> 억원
+                        rows.append({"date": d_str, "value": round(val_raw, 2)})
+                if len(rows) >= 2:
+                    latest = rows[0]
+                    prev = rows[1]
+                    chg_amt = round(latest["value"] - prev["value"], 2)
+                    chg_pct = round((chg_amt / prev["value"]) * 100, 2) if prev["value"] != 0 else 0.0
+
+                    hist = []
+                    if existing_item and existing_item.get("history"):
+                        hist = list(existing_item["history"])
+                        if hist and hist[-1]["date"] == latest["date"]:
+                            hist[-1]["value"] = latest["value"]
+                        elif hist and hist[-1]["date"] < latest["date"]:
+                            hist.append(latest)
+                    else:
+                        hist = list(reversed(rows))
+
+                    meta = INDICATORS_META.get("KOSPI_TRADE_VALUE", {})
+                    return {
+                        "ticker": "KOSPI_TRADE_VALUE",
+                        "name": meta.get("name", "KOSPI 거래대금 (단위:억원)"),
+                        "price": latest["value"],
+                        "change_amt": chg_amt,
+                        "change_percent": chg_pct,
+                        "open": None, "high": None, "low": None, "close": latest["value"],
+                        "history": hist[-200:],
+                        "negative_favorable": meta.get("negative_favorable", False),
+                        "is_integer_only": True,
+                        "is_percent": False
+                    }
+    except Exception as e:
+        print(f"Error fetching KOSPI trade value: {e}")
+    return existing_item
 
 def fetch_yahoo_bulk(tickers):
     """Fetch daily OHLCV and history for multiple tickers via yfinance (up to 200 trading days)."""
@@ -273,72 +376,12 @@ def fetch_yahoo_bulk(tickers):
 
     return results
 
-def compute_skhy_premium(skhy_data, krw_data, hynix_data):
-    """
-    Calculate SKHY ADR Premium based on:
-    premiumPrice = (SKHY * KRW * 10) - HYNIX
-    premiumPercent = (premiumPrice / HYNIX) * 100
-    """
-    if not skhy_data or not krw_data or not hynix_data:
-        return None
-
-    skhy_hist = {h["date"]: h["value"] for h in skhy_data.get("history", [])}
-    krw_hist = {h["date"]: h["value"] for h in krw_data.get("history", [])}
-    hynix_hist = {h["date"]: h["value"] for h in hynix_data.get("history", [])}
-
-    all_dates = sorted(list(set(skhy_hist.keys()) | set(krw_hist.keys()) | set(hynix_hist.keys())))
-
-    last_skhy = None
-    last_krw = None
-    last_hynix = None
-    aligned = []
-
-    for d in all_dates:
-        if d in skhy_hist:
-            last_skhy = skhy_hist[d]
-        if d in krw_hist:
-            last_krw = krw_hist[d]
-        if d in hynix_hist:
-            last_hynix = hynix_hist[d]
-
-        if last_skhy is not None and last_krw is not None and last_hynix is not None and last_hynix > 0:
-            p_price = (last_skhy * last_krw * 10) - last_hynix
-            p_pct = (p_price / last_hynix) * 100
-            aligned.append({
-                "date": d,
-                "price": p_price,
-                "percent": round(p_pct, 2)
-            })
-
-    if len(aligned) >= 2:
-        latest = aligned[-1]
-        prev = aligned[-2]
-        chg_amt = latest["price"] - prev["price"]
-        chg_pct = (chg_amt / abs(prev["price"])) * 100 if prev["price"] != 0 else 0
-
-        hist = [{"date": a["date"], "value": a["percent"]} for a in aligned][-200:]
-
-        meta = INDICATORS_META.get("SKHY_ADR_PREMIUM", {})
-        return {
-            "ticker": "SKHY_ADR_PREMIUM",
-            "name": meta.get("name", "SKHY ADR Premium"),
-            "price": latest["price"],
-            "change_amt": chg_amt,
-            "change_percent": chg_pct,
-            "open": None, "high": None, "low": None, "close": latest["price"],
-            "history": hist,
-            "negative_favorable": False,
-            "is_integer_only": True,
-            "is_percent": True
-        }
-    return None
-
-def fetch_all_market_data():
+def fetch_all_market_data(force_refresh=False, wait_for_krx=False):
     """Fetch and aggregate all indicators across US, K-Market, and Semiconductor tabs."""
     all_data = {}
 
-    # 1. KRX Cache Data
-    krx_data = get_krx_cache_data()
+    # 1. KRX Cache Data (provides KOFIA deposits/credit/margin_call, VKOSPI, Night Futures, PER, PBR, ADR)
+    krx_data = get_krx_cache_data(force_update=force_refresh, wait=wait_for_krx)
     all_data.update(krx_data)
 
     # 2. CNN Fear & Greed
@@ -346,36 +389,37 @@ def fetch_all_market_data():
     if fg_data:
         all_data["FEAR_GREED"] = fg_data
 
-    # 3. Korean stocks via Naver Finance API
-    korean_tickers = ["005930.KS", "009150.KS", "402340.KS", "000660.KS", "^KS11", "^KQ11"]
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    # 3. Korean stocks, indices, and KOSPI200 Futures via Naver Mobile API (live and independent of cache)
+    korean_tickers = [
+        "005930.KS", "009150.KS", "402340.KS", "000660.KS",
+        "^KS11", "^KQ11", "KOSPI200_FUTURES"
+    ]
+    with ThreadPoolExecutor(max_workers=7) as executor:
         naver_results = list(executor.map(fetch_naver_price, korean_tickers))
 
     for item in naver_results:
         if item:
             all_data[item["ticker"]] = item
 
+    # 3b. Compute KOSPI RSI dynamically from live KOSPI (^KS11) daily close history
+    ks11_item = all_data.get("^KS11")
+    if ks11_item:
+        rsi_item = compute_kospi_rsi(ks11_item)
+        if rsi_item:
+            all_data["KOSPI_RSI"] = rsi_item
+
+    # 3c. Fetch KOSPI Trade Value dynamically from Naver Finance
+    tv_item = fetch_kospi_trade_value(all_data.get("KOSPI_TRADE_VALUE"))
+    if tv_item:
+        all_data["KOSPI_TRADE_VALUE"] = tv_item
+
     # 4. Determine remaining tickers to query from Yahoo Finance
     all_meta_tickers = list(INDICATORS_META.keys())
-    excluded = set(krx_data.keys()) | {"FEAR_GREED", "SKHY_ADR_PREMIUM"} | set(all_data.keys())
+    excluded = set(all_data.keys()) | {"FEAR_GREED"}
     yahoo_tickers = [t for t in all_meta_tickers if t not in excluded]
-
-    # Ensure required tickers for SKHY premium are fetched
-    for req_t in ["SKHY", "KRW=X", "000660.KS"]:
-        if req_t not in all_data and req_t not in yahoo_tickers:
-            yahoo_tickers.append(req_t)
 
     # Fetch Yahoo data in bulk
     yahoo_data = fetch_yahoo_bulk(yahoo_tickers)
     all_data.update(yahoo_data)
-
-    # 5. Compute SKHY ADR Premium
-    skhy_row = compute_skhy_premium(
-        all_data.get("SKHY"),
-        all_data.get("KRW=X"),
-        all_data.get("000660.KS")
-    )
-    if skhy_row:
-        all_data["SKHY_ADR_PREMIUM"] = skhy_row
 
     return all_data

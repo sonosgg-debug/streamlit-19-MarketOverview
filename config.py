@@ -17,7 +17,7 @@ K_MARKET_TICKERS = [
 
 SEMI_MARKET_TICKERS = [
     '^SOX', 'NVDA', 'MU', 'SNDK', 'DRAM', 'CCML',
-    '005930.KS', '009150.KS', '402340.KS', '000660.KS', 'SKHY', 'SKHY_ADR_PREMIUM', '285A.T', '6981.T', '688825.SS'
+    '005930.KS', '009150.KS', '402340.KS', '000660.KS', 'SKHY', '285A.T', '6981.T', '688825.SS'
 ]
 
 # Indicator metadata dictionary keyed by ticker
@@ -69,7 +69,6 @@ INDICATORS_META = {
     '402340.KS': {'name': 'SK스퀘어', 'negative_favorable': False, 'integer_only': True},
     '000660.KS': {'name': 'SK하이닉스', 'negative_favorable': False, 'integer_only': True},
     'SKHY': {'name': 'SKHY (ADR)', 'negative_favorable': False},
-    'SKHY_ADR_PREMIUM': {'name': 'SKHY ADR Premium', 'negative_favorable': False, 'is_percent': True},
     '285A.T': {'name': '키옥시아', 'negative_favorable': False, 'integer_only': True},
     '6981.T': {'name': '무라타', 'negative_favorable': False, 'integer_only': True},
     '688825.SS': {'name': 'CXMT', 'negative_favorable': False},
