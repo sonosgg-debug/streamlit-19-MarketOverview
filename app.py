@@ -391,7 +391,7 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 # Data fetching with Streamlit caching (3 minutes TTL)
 @st.cache_data(ttl=180)
 def get_cached_market_data(cache_token=0):
-    return fetch_all_market_data(), datetime.now(KST)
+    return fetch_all_market_data(force_refresh=(cache_token > 0)), datetime.now(KST)
 
 # Token to allow explicit cache invalidation
 if "cache_token" not in st.session_state:

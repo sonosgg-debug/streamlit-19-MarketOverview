@@ -432,6 +432,157 @@ def fetch_vkospi_direct(existing_item=None):
         print(f"Error fetching VKOSPI: {e}")
     return existing_item
 
+def fetch_kospi200_night_direct(existing_item=None, futures_item=None):
+    """
+    Fetch real-time KOSPI200 Night Futures data directly from eSignal API.
+    Provides live quotes and maintains date-aligned history.
+    Gracefully falls back to existing_item (from krx_cache.json) if unavailable.
+    """
+    try:
+        url = "https://esignal.co.kr/data/cache/kospif_ngt.js"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://esignal.co.kr/kospi200-futures-night/"
+        }
+        res = requests.get(url, headers=headers, timeout=4)
+        if res.status_code == 200:
+            cdata = res.json()
+            pts = cdata.get("data", [])
+            if pts:
+                prices = [float(p[1]) for p in pts]
+                open_p = float(cdata.get("open", prices[0]))
+                high_p = max(prices)
+                low_p = min(prices)
+                close_p = prices[-1]
+
+                from datetime import timezone
+                kst = timezone(timedelta(hours=9))
+                ts_first = pts[0][0] / 1000.0
+                ts_last = pts[-1][0] / 1000.0
+                session_start_date = datetime.fromtimestamp(ts_first, kst).strftime("%Y-%m-%d")
+                session_end_date = datetime.fromtimestamp(ts_last, kst).strftime("%Y-%m-%d")
+
+                # Reference price for change calculation:
+                # Night futures change is officially compared to daytime futures close of session_start_date.
+                change_base_price = None
+                if futures_item and isinstance(futures_item, dict):
+                    f_hist = futures_item.get("history", [])
+                    for h in reversed(f_hist):
+                        if h.get("date") == session_start_date:
+                            change_base_price = float(h.get("value"))
+                            break
+                    if change_base_price is None and f_hist:
+                        if len(f_hist) >= 2:
+                            change_base_price = float(f_hist[-2].get("value"))
+                        else:
+                            change_base_price = float(f_hist[-1].get("value"))
+
+                # Load history from existing_item or local file
+                history = []
+                night_path = r"D:\AI Investing\Daily_Check\DailyData\kospif_ngt_history.json"
+                if os.path.exists(night_path):
+                    try:
+                        with open(night_path, "r", encoding="utf-8") as f:
+                            raw_file_hist = json.load(f)
+                            for item in raw_file_hist:
+                                d = item.get("date")
+                                p = item.get("price")
+                                if d and p is not None:
+                                    history.append({"date": d, "value": round(float(p), 2)})
+                    except Exception:
+                        pass
+
+                if not history and existing_item and "history" in existing_item:
+                    history = list(existing_item["history"])
+
+                # Determine fallback change_base_price if still None
+                if change_base_price is None:
+                    if len(history) >= 2:
+                        change_base_price = history[-2]["value"]
+                    elif history:
+                        change_base_price = history[-1]["value"]
+                    else:
+                        change_base_price = open_p
+
+                # Update history with current session
+                if history:
+                    last_hist_date = history[-1]["date"]
+                    if session_end_date > last_hist_date:
+                        history.append({"date": session_end_date, "value": round(close_p, 2)})
+                    elif session_end_date == last_hist_date:
+                        history[-1]["value"] = round(close_p, 2)
+                else:
+                    history.append({"date": session_end_date, "value": round(close_p, 2)})
+
+                history = history[-200:]
+
+                # Save updated point back to file if possible
+                if os.path.exists(night_path):
+                    try:
+                        with open(night_path, "r", encoding="utf-8") as f:
+                            file_data = json.load(f)
+                        f_dates = {x["date"]: x for x in file_data}
+                        if session_end_date in f_dates:
+                            f_dates[session_end_date]["price"] = round(close_p, 2)
+                        else:
+                            file_data.append({"date": session_end_date, "price": round(close_p, 2)})
+                        file_data.sort(key=lambda x: x["date"])
+                        file_data = file_data[-200:]
+                        with open(night_path, "w", encoding="utf-8") as f:
+                            json.dump(file_data, f, indent=4, ensure_ascii=False)
+                    except Exception:
+                        pass
+
+                night_change = round(close_p - change_base_price, 2)
+                night_pct = round((night_change / change_base_price) * 100, 2) if change_base_price else 0.0
+
+                meta = INDICATORS_META.get("KOSPI200_NIGHT", {})
+                result_item = {
+                    "ticker": "KOSPI200_NIGHT",
+                    "name": meta.get("name", "KOSPI200 야간 선물 지수"),
+                    "price": round(close_p, 2),
+                    "change_amt": night_change,
+                    "change_percent": night_pct,
+                    "open": round(open_p, 2),
+                    "high": round(high_p, 2),
+                    "low": round(low_p, 2),
+                    "close": round(close_p, 2),
+                    "history": history,
+                    "negative_favorable": meta.get("negative_favorable", False),
+                    "is_integer_only": False,
+                    "is_percent": False
+                }
+
+                # Update krx_cache.json in background so cache file stays fresh
+                try:
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    cache_path = os.path.join(script_dir, "krx_cache.json")
+                    if os.path.exists(cache_path):
+                        with open(cache_path, "r", encoding="utf-8") as f:
+                            c_data = json.load(f)
+                        if isinstance(c_data, dict):
+                            hist_iso = [{"date": f"{h['date']}T00:00:00.000Z", "value": h['value']} for h in history]
+                            c_data["kospi200_night"] = {
+                                "price": round(close_p, 2),
+                                "changeAmt": night_change,
+                                "changePercent": night_pct,
+                                "open": round(open_p, 2),
+                                "high": round(high_p, 2),
+                                "low": round(low_p, 2),
+                                "close": round(close_p, 2),
+                                "history": hist_iso
+                            }
+                            with open(cache_path, "w", encoding="utf-8") as f:
+                                json.dump(c_data, f, indent=2, ensure_ascii=False)
+                except Exception:
+                    pass
+
+                return result_item
+    except Exception as e:
+        print(f"Error in fetch_kospi200_night_direct: {e}")
+
+    return existing_item
+
 def fetch_yahoo_bulk(tickers):
     """Fetch daily OHLCV and history for multiple tickers via yfinance (up to 200 trading days)."""
     results = {}
@@ -540,6 +691,14 @@ def fetch_all_market_data(force_refresh=False, wait_for_krx=False):
     tv_item = fetch_kospi_trade_value(all_data.get("KOSPI_TRADE_VALUE"))
     if tv_item:
         all_data["KOSPI_TRADE_VALUE"] = tv_item
+
+    # 3d. Fetch KOSPI200 Night Futures dynamically from eSignal API
+    night_item = fetch_kospi200_night_direct(
+        existing_item=all_data.get("KOSPI200_NIGHT"),
+        futures_item=all_data.get("KOSPI200_FUTURES")
+    )
+    if night_item:
+        all_data["KOSPI200_NIGHT"] = night_item
 
     # 4. Determine remaining tickers to query from Yahoo Finance
     all_meta_tickers = list(INDICATORS_META.keys())

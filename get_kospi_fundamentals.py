@@ -685,6 +685,41 @@ def task_local_kofia_adr():
         except Exception as adr_up_err:
             print(f"Error updating ADR history in scraper: {adr_up_err}", file=sys.stderr)
 
+        # Backfill any missing recent business days via pykrx
+        try:
+            if os.path.exists(adr_path):
+                with open(adr_path, "r", encoding="utf-8") as f:
+                    history = json.load(f)
+            else:
+                history = []
+            
+            existing_dates = {item['date'] for item in history}
+            today_dt = datetime.now()
+            needs_save = False
+            for i in range(1, 8):
+                check_dt = today_dt - timedelta(days=i)
+                if check_dt.weekday() < 5:
+                    d_str = check_dt.strftime("%Y-%m-%d")
+                    if d_str not in existing_dates:
+                        try:
+                            df_change = stock.get_market_price_change_by_ticker(d_str.replace('-', ''), d_str.replace('-', ''), market='KOSPI')
+                            if df_change is not None and not df_change.empty:
+                                adv = len(df_change[df_change['등락률'] > 0])
+                                dec = len(df_change[df_change['등락률'] < 0])
+                                if adv > 0 or dec > 0:
+                                    history.append({'date': d_str, 'adv': adv, 'dec': dec})
+                                    existing_dates.add(d_str)
+                                    needs_save = True
+                        except Exception:
+                            pass
+            if needs_save:
+                history.sort(key=lambda x: x['date'])
+                history = history[-250:]
+                with open(adr_path, "w", encoding="utf-8") as f:
+                    json.dump(history, f, indent=4)
+        except Exception as pykrx_adr_err:
+            print(f"Error backfilling ADR via pykrx: {pykrx_adr_err}", file=sys.stderr)
+
         if os.path.exists(adr_path):
             with open(adr_path, "r", encoding="utf-8") as f:
                 adr_data = json.load(f)
@@ -785,16 +820,20 @@ def task_night_futures(futures_price_ref):
 
                 if has_live:
                     current_price = close_p
-                    if session_date_str and session_date_str > last_hist_date:
-                        prev_price = latest_night_from_file
-                        night_history.append({"date": format_iso_date(session_date_str), "value": round(current_price, 2)})
-                        if len(night_history) > 200:
-                            night_history = night_history[-200:]
-                    elif session_date_str == last_hist_date:
-                        prev_price = round(float(night_data[-2]['price']), 2) if len(night_data) >= 2 else latest_night_from_file
-                        night_history[-1]['value'] = round(current_price, 2)
+                    f_dates = {x['date']: x for x in night_data}
+                    if session_date_str in f_dates:
+                        f_dates[session_date_str]['price'] = round(current_price, 2)
                     else:
-                        prev_price = round(float(night_data[-2]['price']), 2) if len(night_data) >= 2 else latest_night_from_file
+                        night_data.append({'date': session_date_str, 'price': round(current_price, 2)})
+                    night_data.sort(key=lambda x: x['date'])
+                    night_data = night_data[-200:]
+                    try:
+                        with open(night_path, "w", encoding="utf-8") as f_save:
+                            json.dump(night_data, f_save, indent=4, ensure_ascii=False)
+                    except Exception:
+                        pass
+                    night_history = [{"date": format_iso_date(item['date']), "value": round(float(item['price']), 2)} for item in night_data]
+                    prev_price = round(float(night_data[-2]['price']), 2) if len(night_data) >= 2 else latest_night_from_file
                 else:
                     current_price = latest_night_from_file
                     prev_price = round(float(night_data[-2]['price']), 2) if len(night_data) >= 2 else latest_night_from_file
