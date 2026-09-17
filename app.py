@@ -391,14 +391,20 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 # Data fetching with Streamlit caching (3 minutes TTL)
 @st.cache_data(ttl=180)
 def get_cached_market_data(cache_token=0):
-    return fetch_all_market_data(force_refresh=(cache_token > 0)), datetime.now(KST)
+    wait = (cache_token > 0)
+    return fetch_all_market_data(force_refresh=wait, wait_for_krx=wait), datetime.now(KST)
 
 # Token to allow explicit cache invalidation
 if "cache_token" not in st.session_state:
     st.session_state.cache_token = 0
 
-# Fetch Data
-all_data, fetch_time = get_cached_market_data(st.session_state.cache_token)
+# Fetch Data with spinner when actively refreshing
+if st.session_state.cache_token > 0 and st.session_state.get("refreshing", False):
+    with st.spinner("최신 시장 데이터 갱신 중..."):
+        all_data, fetch_time = get_cached_market_data(st.session_state.cache_token)
+    st.session_state["refreshing"] = False
+else:
+    all_data, fetch_time = get_cached_market_data(st.session_state.cache_token)
 
 # Show toast if just refreshed
 if st.session_state.pop("just_refreshed", False):
@@ -440,10 +446,10 @@ with st.sidebar:
     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
     if st.button("조회", type="primary", use_container_width=True):
-        if st.session_state.active_sector == chosen_sector:
-            st.cache_data.clear()
-            st.session_state.cache_token += 1
-            st.session_state["just_refreshed"] = True
+        st.cache_data.clear()
+        st.session_state.cache_token += 1
+        st.session_state["just_refreshed"] = True
+        st.session_state["refreshing"] = True
         st.session_state.active_sector = chosen_sector
         st.rerun()
 
@@ -485,6 +491,7 @@ with col_refresh:
         st.cache_data.clear()
         st.session_state.cache_token += 1
         st.session_state["just_refreshed"] = True
+        st.session_state["refreshing"] = True
         st.rerun()
 
 st.markdown(

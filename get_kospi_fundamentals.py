@@ -67,159 +67,55 @@ def format_iso_date(date_str):
         dt = date_str
     return dt.strftime("%Y-%m-%dT00:00:00.000Z")
 
-def fetch_page(page, headers):
-    url = f"https://finance.naver.com/sise/sise_index_day.naver?code=FUT&page={page}"
-    try:
-        res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code == 200:
-            return res.content
-    except Exception:
-        pass
-    return None
-
-def get_naver_futures():
-    data_list = []
+def get_naver_futures_fast():
     headers = {"User-Agent": "Mozilla/5.0"}
-    
-    # 1. Scrape history in parallel (35 pages for up to ~200+ days)
-    pages = list(range(1, 35))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-        contents = list(executor.map(lambda p: fetch_page(p, headers), pages))
-        
-    for content in contents:
-        if not content:
-            continue
+    raw_items = []
+    for p in range(1, 5):
         try:
-            soup = BeautifulSoup(content.decode("euc-kr", "replace"), "html.parser")
-            table = soup.find("table", class_="type_1")
-            if not table:
-                continue
-            rows = table.find_all("tr")
-            for r in rows:
-                cols = r.find_all("td")
-                if len(cols) >= 6:
-                    date_str = cols[0].text.strip()
-                    if not date_str or "." not in date_str:
-                        continue
-                    close_str = cols[1].text.strip().replace(",", "")
-                    try:
-                        date_obj = datetime.strptime(date_str, "%Y.%m.%d")
-                        close_val = float(close_str)
-                        data_list.append({"Date": date_obj, "Close": close_val})
-                    except Exception:
-                        pass
+            url = f"https://m.stock.naver.com/api/index/FUT/price?pageSize=60&page={p}"
+            res = requests.get(url, headers=headers, timeout=4)
+            if res.status_code == 200:
+                data = res.json()
+                if isinstance(data, list) and len(data) > 0:
+                    raw_items.extend(data)
+                else:
+                    break
+            else:
+                break
         except Exception:
-            pass
+            break
             
-    if not data_list:
+    if not raw_items:
         return None
         
-    df = pd.DataFrame(data_list)
-    df = df.drop_duplicates(subset=["Date"])
-    df = df.set_index("Date")
-    df = df.sort_index()
+    latest = raw_items[0]
+    price = float(latest["closePrice"].replace(",", ""))
+    open_p = float(latest["openPrice"].replace(",", ""))
+    high_p = float(latest["highPrice"].replace(",", ""))
+    low_p = float(latest["lowPrice"].replace(",", ""))
+    change_amt = float(latest["compareToPreviousClosePrice"].replace(",", ""))
+    cmp_price = latest.get("compareToPreviousPrice", {})
+    if isinstance(cmp_price, dict) and cmp_price.get("name") == "FALLING":
+        if change_amt > 0:
+            change_amt = -change_amt
+    pct = float(latest["fluctuationsRatio"].replace(",", ""))
+    if change_amt < 0 and pct > 0:
+        pct = -pct
     
-    # 2. Scrape current quote details
-    open_val = None
-    high_val = None
-    low_val = None
-    price_val = None
-    change_val = None
-    pct_val = None
-    quote_date_str = None
+    history = [
+        {"date": format_iso_date(item["localTradedAt"][:10]), "value": float(item["closePrice"].replace(",", ""))}
+        for item in reversed(raw_items)
+    ][-200:]
     
-    try:
-        url_curr = "https://finance.naver.com/sise/sise_index.naver?code=FUT"
-        res_curr = requests.get(url_curr, headers=headers, timeout=5)
-        if res_curr.status_code == 200:
-            soup_curr = BeautifulSoup(res_curr.content, "html.parser", from_encoding="euc-kr")
-            
-            # Parse quote date from time span
-            time_span = soup_curr.find("span", id="time")
-            if time_span:
-                time_text = time_span.get_text()
-                match = re.search(r"(\d{4})\.(\d{2})\.(\d{2})", time_text)
-                if match:
-                    quote_date_str = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
-            
-            for tr in soup_curr.find_all("tr"):
-                cells = tr.find_all(["th", "td"])
-                texts = [c.get_text(strip=True) for c in cells]
-                for idx, text in enumerate(texts):
-                    if "선물(" in text:
-                        price_val = float(texts[idx+1].replace(",", ""))
-                    elif "시가" in text:
-                        open_val = float(texts[idx+1].replace(",", ""))
-                    elif "전일대비" in text:
-                        val_str = "".join(c for c in texts[idx+1] if c.isdigit() or c == ".")
-                        if val_str:
-                            change_val = float(val_str)
-                            # Fixed down arrow character check: '▼' and '↓' indicate a negative change
-                            if "-" in texts[idx+1] or "하락" in texts[idx+1] or "▼" in texts[idx+1] or "↓" in texts[idx+1]:
-                                change_val = -change_val
-                    elif "고가" in text:
-                        high_val = float(texts[idx+1].replace(",", ""))
-                    elif "저가" in text:
-                        low_val = float(texts[idx+1].replace(",", ""))
-                    elif "등락률" in text:
-                        pct_str = texts[idx+1].replace("%", "").strip()
-                        pct_val = float(pct_str)
-    except Exception:
-        pass
-        
-    # fallback to latest historical if current quote fails
-    latest_hist_date = df.index[-1]
-    latest_hist_close = float(df["Close"].iloc[-1])
-    
-    if price_val is None:
-        price_val = latest_hist_close
-    if open_val is None:
-        open_val = price_val
-    if high_val is None:
-        high_val = price_val
-    if low_val is None:
-        low_val = price_val
-        
-    if change_val is None or pct_val is None:
-        if len(df) >= 2:
-            prev_close = float(df["Close"].iloc[-2])
-            change_val = price_val - prev_close
-            pct_val = (change_val / prev_close) * 100 if prev_close != 0 else 0.0
-            
-    latest_hist_str = latest_hist_date.strftime("%Y-%m-%d")
-    
-    df_200 = df.tail(200)
-    history_list = [{"date": dt.strftime("%Y-%m-%dT00:00:00.000Z"), "value": round(float(row["Close"]), 2)} for dt, row in df_200.iterrows()]
-    
-    # Fallback quote_date_str if none parsed (only on weekdays after 9am)
-    if quote_date_str is None:
-        now = datetime.now()
-        if now.weekday() < 5 and now.hour >= 9:
-            quote_date_str = now.strftime("%Y-%m-%d")
-        else:
-            quote_date_str = latest_hist_str
-
-    # Decide whether to append or update history
-    if quote_date_str > latest_hist_str:
-        history_list.append({
-            "date": datetime.strptime(quote_date_str, "%Y-%m-%d").strftime("%Y-%m-%dT00:00:00.000Z"),
-            "value": price_val
-        })
-        if len(history_list) > 200:
-            history_list = history_list[-200:]
-    elif quote_date_str == latest_hist_str:
-        if history_list:
-            history_list[-1]["value"] = price_val
-            
     return {
-        "price": price_val,
-        "changeAmt": change_val,
-        "changePercent": pct_val,
-        "open": open_val,
-        "high": high_val,
-        "low": low_val,
-        "close": price_val,
-        "history": history_list
+        "price": price,
+        "changeAmt": change_amt,
+        "changePercent": pct,
+        "open": open_p,
+        "high": high_p,
+        "low": low_p,
+        "close": price,
+        "history": history
     }
 
 def fetch_kofia_deposits_credit(start_date, end_date):
@@ -454,114 +350,55 @@ def task_vkospi(start_date, end_date):
         print(f"Error in task_vkospi: {e}", file=sys.stderr)
     return result
 
-def task_ohlcv_rsi(start_date, end_date):
+def task_ohlcv_pykrx(start_date, end_date):
     result = {}
     try:
-        data_list = []
-        headers = {"User-Agent": "Mozilla/5.0"}
-        
-        s_dt = datetime.strptime(start_date, "%Y%m%d")
-        e_dt = datetime.strptime(end_date, "%Y%m%d")
-        
-        def fetch_naver_page(page):
-            url = f"https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page={page}"
-            try:
-                res = requests.get(url, headers=headers, timeout=5)
-                if res.status_code == 200:
-                    return res.content
-            except Exception:
-                pass
-            return None
-            
-        pages = list(range(1, 35))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            contents = list(executor.map(fetch_naver_page, pages))
-            
-        for content in contents:
-            if not content:
-                continue
-            try:
-                soup = BeautifulSoup(content.decode("euc-kr", "replace"), "html.parser")
-                table = soup.find("table", class_="type_1")
-                if not table:
-                    continue
-                rows = table.find_all("tr")
-                for r in rows:
-                    cols = r.find_all("td")
-                    if len(cols) >= 6:
-                        date_str = cols[0].text.strip()
-                        if not date_str or "." not in date_str:
-                            continue
-                        
-                        try:
-                            date_obj = datetime.strptime(date_str, "%Y.%m.%d")
-                            if not (s_dt <= date_obj <= e_dt):
-                                continue
-                                
-                            close_val = float(cols[1].text.strip().replace(",", ""))
-                            value_val = float(cols[5].text.strip().replace(",", ""))
-                            
-                            data_list.append({
-                                "Date": date_obj,
-                                "Close": close_val,
-                                "Value": value_val
-                            })
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+        df_ohlcv = stock.get_index_ohlcv_by_date(start_date, end_date, "1001")
+        if df_ohlcv is not None and not df_ohlcv.empty:
+            # 1. KOSPI Trade Value (원 -> 억원)
+            df_val = df_ohlcv[df_ohlcv['거래대금'] > 0]
+            if len(df_val) >= 2:
+                df_val_200 = df_val.tail(200)
+                history_val = [
+                    {"date": format_iso_date(dt), "value": round(float(row['거래대금'] / 100000000.0), 2)}
+                    for dt, row in df_val_200.iterrows()
+                ]
+                latest_val = round(float(df_val['거래대금'].iloc[-1] / 100000000.0), 2)
+                prev_val = round(float(df_val['거래대금'].iloc[-2] / 100000000.0), 2)
+                val_change = round(latest_val - prev_val, 2)
+                val_pct = round((val_change / prev_val) * 100, 2) if prev_val != 0 else 0.0
                 
-        if not data_list:
-            raise ValueError("No KOSPI data scraped from Naver Finance")
-            
-        df = pd.DataFrame(data_list)
-        df = df.drop_duplicates(subset=["Date"])
-        df = df.set_index("Date")
-        df = df.sort_index()
-        
-        val_series = df["Value"] / 100
-        val_series = val_series[val_series > 0].copy()
-        
-        if len(val_series) >= 2:
-            val_200 = val_series.tail(200)
-            history_val = [{"date": format_iso_date(dt), "value": round(float(val), 2)} for dt, val in val_200.items()]
-            latest_val = round(float(val_series.iloc[-1]), 2)
-            prev_val = round(float(val_series.iloc[-2]), 2)
-            val_change = round(latest_val - prev_val, 2)
-            val_pct = round((val_change / prev_val) * 100, 2) if prev_val != 0 else 0.0
-            
-            result["kospi_trade_value"] = {
-                "price": latest_val,
-                "changeAmt": val_change,
-                "changePercent": val_pct,
-                "history": history_val
-            }
-            
-        close_series = df["Close"].copy()
-        if len(close_series) >= 15:
-            delta = close_series.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / loss
-            rsi_series = 100 - (100 / (1 + rs))
-            rsi_series = rsi_series.dropna()
-            
-            if len(rsi_series) >= 2:
-                rsi_200 = rsi_series.tail(200)
-                history_rsi = [{"date": format_iso_date(dt), "value": round(float(val), 2)} for dt, val in rsi_200.items()]
-                latest_rsi = round(float(rsi_series.iloc[-1]), 2)
-                prev_rsi = round(float(rsi_series.iloc[-2]), 2)
-                rsi_change = round(latest_rsi - prev_rsi, 2)
-                rsi_pct = round((rsi_change / prev_rsi) * 100, 2) if prev_rsi != 0 else 0.0
-                
-                result["kospi_rsi"] = {
-                    "price": latest_rsi,
-                    "changeAmt": rsi_change,
-                    "changePercent": rsi_pct,
-                    "history": history_rsi
+                result["kospi_trade_value"] = {
+                    "price": latest_val,
+                    "changeAmt": val_change,
+                    "changePercent": val_pct,
+                    "history": history_val
                 }
+                
+            # 2. KOSPI RSI (14-day)
+            close_series = df_ohlcv["종가"].copy()
+            if len(close_series) >= 15:
+                delta = close_series.diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                rs = gain / loss
+                rsi_series = (100 - (100 / (1 + rs))).dropna()
+                if len(rsi_series) >= 2:
+                    rsi_200 = rsi_series.tail(200)
+                    history_rsi = [{"date": format_iso_date(dt), "value": round(float(val), 2)} for dt, val in rsi_200.items()]
+                    latest_rsi = round(float(rsi_series.iloc[-1]), 2)
+                    prev_rsi = round(float(rsi_series.iloc[-2]), 2)
+                    rsi_change = round(latest_rsi - prev_rsi, 2)
+                    rsi_pct = round((rsi_change / prev_rsi) * 100, 2) if prev_rsi != 0 else 0.0
+                    
+                    result["kospi_rsi"] = {
+                        "price": latest_rsi,
+                        "changeAmt": rsi_change,
+                        "changePercent": rsi_pct,
+                        "history": history_rsi
+                    }
     except Exception as e:
-        print(f"Error in task_ohlcv_rsi: {e}", file=sys.stderr)
+        print(f"Error in task_ohlcv_pykrx: {e}", file=sys.stderr)
     return result
 
 def task_local_kofia_adr():
@@ -868,9 +705,9 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
             # 1. Run KOFIA Preload, Naver Futures, fundamentals, ohlcv, and vkospi in parallel
             future_preload = executor.submit(task_kofia_preload)
-            future_futures = executor.submit(get_naver_futures)
+            future_futures = executor.submit(get_naver_futures_fast)
             future_fundamentals = executor.submit(task_fundamentals, start_date, end_date)
-            future_ohlcv_rsi = executor.submit(task_ohlcv_rsi, start_date, end_date)
+            future_ohlcv = executor.submit(task_ohlcv_pykrx, start_date, end_date)
             future_vkospi = executor.submit(task_vkospi, start_date, end_date)
             
             # Wait for KOFIA preload to finish before executing task_local_kofia_adr
@@ -894,7 +731,7 @@ def main():
                 print(f"Error fetching fundamentals in thread: {e}", file=sys.stderr)
                 
             try:
-                ohlcv_data = future_ohlcv_rsi.result()
+                ohlcv_data = future_ohlcv.result()
                 result.update(ohlcv_data)
             except Exception as e:
                 print(f"Error fetching ohlcv in thread: {e}", file=sys.stderr)
@@ -915,6 +752,11 @@ def main():
         futures_price_ref = result.get("kospi200_futures", {}).get("price")
         night_data = task_night_futures(futures_price_ref)
         result.update(night_data)
+        
+        # 3. Add metadata for smart freshness checking
+        result["_meta"] = {
+            "last_batch_update": datetime.now().isoformat()
+        }
         
         # ==========================================
         # Write results to krx_cache.json

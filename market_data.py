@@ -40,9 +40,24 @@ def load_krx_auth():
 
 load_krx_auth()
 
+_krx_update_lock = threading.Lock()
+_krx_updating = False
+_krx_thread = None
+
 def trigger_krx_background_update(wait=False):
     """Trigger get_kospi_fundamentals.py in background (or synchronously if wait=True) if cache is stale or requested."""
-    global _krx_updating
+    global _krx_updating, _krx_thread
+    with _krx_update_lock:
+        if _krx_updating:
+            if wait and _krx_thread and _krx_thread.is_alive():
+                pass
+            else:
+                return
+
+    if wait and _krx_updating and _krx_thread and _krx_thread.is_alive():
+        _krx_thread.join(timeout=60)
+        return
+
     with _krx_update_lock:
         if _krx_updating:
             return
@@ -63,8 +78,8 @@ def trigger_krx_background_update(wait=False):
     if wait:
         _worker()
     else:
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
+        _krx_thread = threading.Thread(target=_worker, daemon=True)
+        _krx_thread.start()
 
 def get_fear_and_greed():
     """Fetch CNN Fear & Greed Index score and historical data."""
@@ -109,18 +124,39 @@ def get_krx_cache_data(force_update=False, wait=False):
     """Read data from local krx_cache.json if available and trigger refresh if stale or forced."""
     cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
 
+    should_update = False
     if force_update:
-        trigger_krx_background_update(wait=wait)
+        should_update = True
     elif not os.path.exists(cache_path):
-        trigger_krx_background_update(wait=wait)
-        return {}
+        should_update = True
+        wait = True  # File doesn't exist, must wait to produce it
     else:
         try:
-            mtime = datetime.fromtimestamp(os.path.getmtime(cache_path))
-            if (datetime.now() - mtime).total_seconds() > 14400:
-                trigger_krx_background_update(wait=wait)
+            with open(cache_path, "r", encoding="utf-8") as f:
+                c_head = json.load(f)
+            meta = c_head.get("_meta", {})
+            last_update_str = meta.get("last_batch_update")
+            if last_update_str:
+                last_dt = datetime.fromisoformat(last_update_str)
+                if (datetime.now() - last_dt).total_seconds() > 14400:
+                    should_update = True
+            else:
+                should_update = True
+
+            # If weekday after 15:45 KST, check if PER has today's closing data
+            now_dt = datetime.now()
+            if now_dt.weekday() < 5 and (now_dt.hour > 15 or (now_dt.hour == 15 and now_dt.minute >= 45)):
+                per_hist = c_head.get("per", {}).get("history", [])
+                if per_hist:
+                    last_per_date = str(per_hist[-1].get("date", "")).split("T")[0]
+                    today_str = now_dt.strftime("%Y-%m-%d")
+                    if last_per_date < today_str:
+                        should_update = True
         except Exception:
-            pass
+            should_update = True
+
+    if should_update:
+        trigger_krx_background_update(wait=wait)
 
     try:
         with open(cache_path, "r", encoding="utf-8") as f:
@@ -283,50 +319,41 @@ def compute_kospi_rsi(ks11_item):
     }
 
 def fetch_kospi_trade_value(existing_item=None):
-    """Fetch recent KOSPI trading value from Naver Finance table."""
+    """Return KOSPI trading value from KRX cache or pykrx."""
+    if existing_item and existing_item.get("price") is not None and existing_item.get("history"):
+        return existing_item
     try:
-        url = "https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page=1"
-        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=4)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.content.decode("euc-kr", "replace"), "html.parser")
-            tbl = soup.find("table", class_="type_1")
-            if tbl:
-                rows = []
-                for tr in tbl.find_all("tr"):
-                    cols = [td.text.strip() for td in tr.find_all("td") if td.text.strip()]
-                    if len(cols) >= 6 and "." in cols[0]:
-                        d_str = cols[0].replace(".", "-")
-                        val_raw = float(cols[5].replace(",", "")) / 100.0  # 백만원 -> 억원
-                        rows.append({"date": d_str, "value": round(val_raw, 2)})
-                if len(rows) >= 2:
-                    latest = rows[0]
-                    prev = rows[1]
-                    chg_amt = round(latest["value"] - prev["value"], 2)
-                    chg_pct = round((chg_amt / prev["value"]) * 100, 2) if prev["value"] != 0 else 0.0
-
-                    hist = []
-                    if existing_item and existing_item.get("history"):
-                        hist = list(existing_item["history"])
-                        if hist and hist[-1]["date"] == latest["date"]:
-                            hist[-1]["value"] = latest["value"]
-                        elif hist and hist[-1]["date"] < latest["date"]:
-                            hist.append(latest)
-                    else:
-                        hist = list(reversed(rows))
-
-                    meta = INDICATORS_META.get("KOSPI_TRADE_VALUE", {})
-                    return {
-                        "ticker": "KOSPI_TRADE_VALUE",
-                        "name": meta.get("name", "KOSPI 거래대금 (단위:억원)"),
-                        "price": latest["value"],
-                        "change_amt": chg_amt,
-                        "change_percent": chg_pct,
-                        "open": None, "high": None, "low": None, "close": latest["value"],
-                        "history": hist[-200:],
-                        "negative_favorable": meta.get("negative_favorable", False),
-                        "is_integer_only": True,
-                        "is_percent": False
-                    }
+        from pykrx import stock
+        load_krx_auth()
+        today = datetime.now().strftime("%Y%m%d")
+        start = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
+        df_ohlcv = stock.get_index_ohlcv_by_date(start, today, "1001")
+        if df_ohlcv is not None and not df_ohlcv.empty:
+            df_val = df_ohlcv[df_ohlcv['거래대금'] > 0]
+            if len(df_val) >= 2:
+                df_val_200 = df_val.tail(200)
+                history_val = [
+                    {"date": dt.strftime("%Y-%m-%d"), "value": round(float(row['거래대금'] / 100000000.0), 2)}
+                    for dt, row in df_val_200.iterrows()
+                ]
+                latest_val = round(float(df_val['거래대금'].iloc[-1] / 100000000.0), 2)
+                prev_val = round(float(df_val['거래대금'].iloc[-2] / 100000000.0), 2)
+                val_change = round(latest_val - prev_val, 2)
+                val_pct = round((val_change / prev_val) * 100, 2) if prev_val != 0 else 0.0
+                
+                meta = INDICATORS_META.get("KOSPI_TRADE_VALUE", {})
+                return {
+                    "ticker": "KOSPI_TRADE_VALUE",
+                    "name": meta.get("name", "KOSPI 거래대금 (단위:억원)"),
+                    "price": latest_val,
+                    "change_amt": val_change,
+                    "change_percent": val_pct,
+                    "open": None, "high": None, "low": None, "close": latest_val,
+                    "history": history_val,
+                    "negative_favorable": meta.get("negative_favorable", False),
+                    "is_integer_only": True,
+                    "is_percent": False
+                }
     except Exception as e:
         print(f"Error fetching KOSPI trade value: {e}")
     return existing_item
