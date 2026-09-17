@@ -65,7 +65,7 @@ section[data-testid="stSidebar"] h3 {
     background: rgba(24, 24, 27, 0.7) !important;
     backdrop-filter: blur(12px) !important;
     -webkit-backdrop-filter: blur(12px) !important;
-    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border: 1px solid rgba(138, 180, 248, 0.55) !important;
     border-radius: 12px !important;
     padding: 18px 20px !important;
     min-height: 145px !important;
@@ -73,15 +73,15 @@ section[data-testid="stSidebar"] h3 {
     flex-direction: column !important;
     justify-content: space-between !important;
     transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease, border-color 0.2s ease !important;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(138, 180, 248, 0.12) !important;
     position: relative !important;
     overflow: hidden !important;
 }
 
 .glass-card:hover {
     transform: translateY(-4px) !important;
-    border-color: rgba(255, 255, 255, 0.18) !important;
-    box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.6) !important;
+    border-color: rgba(138, 180, 248, 0.85) !important;
+    box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.6), 0 0 16px rgba(138, 180, 248, 0.25) !important;
     background: rgba(30, 30, 34, 0.85) !important;
 }
 
