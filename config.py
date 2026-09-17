@@ -16,7 +16,7 @@ K_MARKET_TICKERS = [
 ]
 
 SEMI_MARKET_TICKERS = [
-    '^SOX', 'NVDA', 'MU', 'SNDK', 'DRAM', 'CCML',
+    '^SOX', 'NVDA', 'MU', 'SNDK', 'INTC', 'AMD', 'DRAM', 'CCML',
     '005930.KS', '009150.KS', '402340.KS', '000660.KS', 'SKHY', '285A.T', '6981.T', '688825.SS'
 ]
 
@@ -62,6 +62,8 @@ INDICATORS_META = {
     'NVDA': {'name': '엔비디아(NVDA)', 'negative_favorable': False},
     'MU': {'name': '마이크론(MU)', 'negative_favorable': False},
     'SNDK': {'name': '샌디스크(SNDK)', 'negative_favorable': False},
+    'INTC': {'name': '인텔(INTC)', 'negative_favorable': False},
+    'AMD': {'name': 'AMD(AMD)', 'negative_favorable': False},
     'DRAM': {'name': 'DRAM (Roundhill ETF)', 'negative_favorable': False},
     'CCML': {'name': 'CCML (Roundhill ETF)', 'negative_favorable': False},
     '005930.KS': {'name': '삼성전자', 'negative_favorable': False, 'integer_only': True},
