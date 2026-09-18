@@ -471,7 +471,7 @@ elif active_sector == "Semiconductor":
 
 st.markdown(
     f'<div style="text-align: center; margin-top: -15px; margin-bottom: 8px;">'
-    f'<h1 class="main-title" style="text-align: center; font-size: 30px; font-weight: 800; margin: 0 0 6px 0; color: #8AB4F8 !important; -webkit-text-fill-color: #8AB4F8 !important; letter-spacing: -0.02em;">'
+    f'<h1 class="main-title" style="text-align: center; font-size: 1.9rem; font-weight: 800; margin: 0 0 6px 0; color: #8AB4F8 !important; -webkit-text-fill-color: #8AB4F8 !important; letter-spacing: -0.02em;">'
     f'Daily Market Overview'
     f'</h1>'
     f'<div style="text-align: center; font-size: 16px; margin: 0; display: flex; align-items: center; justify-content: center; gap: 8px;">'
