@@ -14,7 +14,6 @@ from card_component import render_card_grid
 # Page config
 st.set_page_config(
     page_title="Market Overview",
-    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
 )
