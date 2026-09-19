@@ -36,10 +36,17 @@ footer {
     display: none !important;
 }
 
+/* Main Content Area Padding */
+.main .block-container,
+[data-testid="stMainBlockContainer"] {
+    padding-top: 2.0rem !important;
+}
+
 /* Main Dashboard Title (00 Bookmarks #8AB4F8 Soft Sky Blue) */
 h1, .main-title, [data-testid="stMarkdownContainer"] h1 {
     color: #8AB4F8 !important;
     -webkit-text-fill-color: #8AB4F8 !important;
+    font-size: 2.0rem !important;
     font-weight: 800 !important;
 }
 
@@ -509,7 +516,7 @@ elif active_sector == "Semiconductor":
 
 st.markdown(
     f'<div style="text-align: center; margin-top: -15px; margin-bottom: 8px;">'
-    f'<h1 class="main-title" style="text-align: center; font-size: 1.9rem; font-weight: 800; margin: 0 0 6px 0; color: #8AB4F8 !important; -webkit-text-fill-color: #8AB4F8 !important; letter-spacing: -0.02em;">'
+    f'<h1 class="main-title" style="text-align: center; font-size: 2.0rem; font-weight: 800; margin: 0 0 6px 0; color: #8AB4F8 !important; -webkit-text-fill-color: #8AB4F8 !important; letter-spacing: -0.02em;">'
     f'Daily Market Overview'
     f'</h1>'
     f'<div style="text-align: center; font-size: 16px; margin: 0; display: flex; align-items: center; justify-content: center; gap: 8px;">'
@@ -563,7 +570,10 @@ st.markdown(cards_html, unsafe_allow_html=True)
 
 # Bottom Horizontal Divider
 st.markdown(
-    '<hr style="border: 0; height: 1px; background-color: #334155; margin: 24px 0 28px 0;">',
+    '<hr style="border: 0; height: 1px; background-color: #334155; margin: 24px 0 28px 0;">'
+    "<div style='text-align: center; color: #64748b; font-size: 0.8rem; margin-top: 8px; margin-bottom: 24px; line-height: 1.6;'>"
+    "⚠️ 본 서비스에서 제공하는 모든 정보는 투자 참고용이며, 투자의 최종 결정과 책임은 투자자 본인에게 있습니다."
+    "</div>",
     unsafe_allow_html=True
 )
 
