@@ -362,26 +362,23 @@ section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked)
     border-color: #38bdf8 !important;
 }
 
-/* Sidebar Primary Button (조회 버튼) */
+/* Sidebar Primary Button (조회 버튼 - 39 DividendStock 표준 스타일 일치) */
 section[data-testid="stSidebar"] button[kind="primary"],
-section[data-testid="stSidebar"] .stButton > button {
-    background: linear-gradient(135deg, #0284c7, #0369a1) !important;
-    border: 1px solid #38bdf8 !important;
+.stButton button[kind="primary"] {
+    background-color: #2563eb !important;
     color: #ffffff !important;
+    border: none !important;
     font-weight: 600 !important;
     font-size: 14.5px !important;
     padding: 8px 16px !important;
-    border-radius: 8px !important;
-    box-shadow: 0 4px 12px rgba(2, 132, 199, 0.3) !important;
+    border-radius: 6px !important;
     transition: all 0.2s ease !important;
 }
 
 section[data-testid="stSidebar"] button[kind="primary"]:hover,
-section[data-testid="stSidebar"] .stButton > button:hover {
-    background: linear-gradient(135deg, #38bdf8, #0284c7) !important;
-    border-color: #7dd3fc !important;
-    box-shadow: 0 6px 18px rgba(56, 189, 248, 0.4) !important;
-    transform: translateY(-1px) !important;
+.stButton button[kind="primary"]:hover {
+    background-color: #1d4ed8 !important;
+    box-shadow: 0 0 10px rgba(37, 99, 235, 0.4) !important;
 }
 </style>
 """
@@ -444,7 +441,7 @@ with st.sidebar:
 
     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
-    if st.button("조회", type="primary", use_container_width=True):
+    if st.button("🔍 조회", type="primary", use_container_width=True):
         st.cache_data.clear()
         st.session_state.cache_token += 1
         st.session_state["just_refreshed"] = True
