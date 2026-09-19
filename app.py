@@ -362,6 +362,37 @@ section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked)
     border-color: #38bdf8 !important;
 }
 
+/* Sidebar Buttons Styling (45 RealEstate, 05 MonthlyReview 표준 일치) */
+section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
+    gap: 6px !important;
+}
+
+section[data-testid="stSidebar"] div.stButton > button {
+    border-radius: 6px !important;
+    font-weight: 700 !important;
+    padding-left: 2px !important;
+    padding-right: 2px !important;
+    padding-top: 4px !important;
+    padding-bottom: 4px !important;
+    min-height: 36px !important;
+    height: 36px !important;
+    white-space: nowrap !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+section[data-testid="stSidebar"] div.stButton > button p {
+    white-space: nowrap !important;
+    overflow: visible !important;
+    font-size: 0.85rem !important;
+    font-weight: 700 !important;
+    line-height: 1 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: inline-block !important;
+}
+
 /* Sidebar Primary Button (조회 버튼 - 39 DividendStock 표준 스타일 일치) */
 section[data-testid="stSidebar"] button[kind="primary"],
 .stButton button[kind="primary"] {
@@ -441,13 +472,23 @@ with st.sidebar:
 
     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
 
-    if st.button("🔍 조회", type="primary", use_container_width=True):
-        st.cache_data.clear()
-        st.session_state.cache_token += 1
-        st.session_state["just_refreshed"] = True
-        st.session_state["refreshing"] = True
-        st.session_state.active_sector = chosen_sector
-        st.rerun()
+    # Update & 조회 버튼 (45 RealEstate, 05 MonthlyReview 레이아웃 통일)
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        if st.button("🔄 Update", use_container_width=True, help="캐시를 초기화하고 최신 시장 데이터를 다시 수집합니다."):
+            st.cache_data.clear()
+            st.session_state.cache_token += 1
+            st.session_state["just_refreshed"] = True
+            st.session_state["refreshing"] = True
+            st.rerun()
+    with col_btn2:
+        if st.button("🔍 조회", type="primary", use_container_width=True, help="선택한 시장 및 섹터로 대시보드를 조회합니다."):
+            st.cache_data.clear()
+            st.session_state.cache_token += 1
+            st.session_state["just_refreshed"] = True
+            st.session_state["refreshing"] = True
+            st.session_state.active_sector = chosen_sector
+            st.rerun()
 
 # Centered Title, Dynamic Subtitle (Selected Sector) with KST Updated Time
 active_sector = st.session_state.active_sector
@@ -480,18 +521,8 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Refresh Button under subtitle (aligned right)
-col_spacer, col_refresh = st.columns([7.2, 1.2])
-with col_refresh:
-    if st.button("🔄 Refresh", use_container_width=True):
-        st.cache_data.clear()
-        st.session_state.cache_token += 1
-        st.session_state["just_refreshed"] = True
-        st.session_state["refreshing"] = True
-        st.rerun()
-
 st.markdown(
-    '<hr style="border: 0; height: 1px; background-color: #334155; margin: 8px 0 18px 0;">',
+    '<hr style="border: 0; height: 1px; background-color: #334155; margin: 14px 0 18px 0;">',
     unsafe_allow_html=True
 )
 
