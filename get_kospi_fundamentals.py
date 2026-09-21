@@ -256,42 +256,45 @@ def task_kofia_preload():
 
 def task_fundamentals(start_date, end_date):
     result = {}
-    try:
-        df_fund = stock.get_index_fundamental(start_date, end_date, "1001")
-        if df_fund is not None and not df_fund.empty:
-            df_fund_filtered = df_fund[(df_fund['PER'] != 0) & (df_fund['PBR'] != 0)].copy()
-            if len(df_fund_filtered) >= 2:
-                df_fund_200 = df_fund_filtered.tail(200)
-                
-                # PER
-                per_history = [{"date": format_iso_date(dt), "value": round(float(row['PER']), 2)} for dt, row in df_fund_200.iterrows()]
-                latest_per = round(float(df_fund_filtered['PER'].iloc[-1]), 2)
-                prev_per = round(float(df_fund_filtered['PER'].iloc[-2]), 2)
-                per_change = round(latest_per - prev_per, 2)
-                per_pct = round((per_change / prev_per) * 100, 2) if prev_per != 0 else 0.0
-                
-                result["per"] = {
-                    "price": latest_per,
-                    "changeAmt": per_change,
-                    "changePercent": per_pct,
-                    "history": per_history
-                }
-                
-                # PBR
-                pbr_history = [{"date": format_iso_date(dt), "value": round(float(row['PBR']), 2)} for dt, row in df_fund_200.iterrows()]
-                latest_pbr = round(float(df_fund_filtered['PBR'].iloc[-1]), 2)
-                prev_pbr = round(float(df_fund_filtered['PBR'].iloc[-2]), 2)
-                pbr_change = round(latest_pbr - prev_pbr, 2)
-                pbr_pct = round((pbr_change / prev_pbr) * 100, 2) if prev_pbr != 0 else 0.0
-                
-                result["pbr"] = {
-                    "price": latest_pbr,
-                    "changeAmt": pbr_change,
-                    "changePercent": pbr_pct,
-                    "history": pbr_history
-                }
-    except Exception as e:
-        print(f"Error in task_fundamentals: {e}", file=sys.stderr)
+    for attempt in range(3):
+        try:
+            df_fund = stock.get_index_fundamental(start_date, end_date, "1001")
+            if df_fund is not None and not df_fund.empty:
+                df_fund_filtered = df_fund[(df_fund['PER'] != 0) & (df_fund['PBR'] != 0)].copy()
+                if len(df_fund_filtered) >= 2:
+                    df_fund_200 = df_fund_filtered.tail(200)
+                    
+                    # PER
+                    per_history = [{"date": format_iso_date(dt), "value": round(float(row['PER']), 2)} for dt, row in df_fund_200.iterrows()]
+                    latest_per = round(float(df_fund_filtered['PER'].iloc[-1]), 2)
+                    prev_per = round(float(df_fund_filtered['PER'].iloc[-2]), 2)
+                    per_change = round(latest_per - prev_per, 2)
+                    per_pct = round((per_change / prev_per) * 100, 2) if prev_per != 0 else 0.0
+                    
+                    result["per"] = {
+                        "price": latest_per,
+                        "changeAmt": per_change,
+                        "changePercent": per_pct,
+                        "history": per_history
+                    }
+                    
+                    # PBR
+                    pbr_history = [{"date": format_iso_date(dt), "value": round(float(row['PBR']), 2)} for dt, row in df_fund_200.iterrows()]
+                    latest_pbr = round(float(df_fund_filtered['PBR'].iloc[-1]), 2)
+                    prev_pbr = round(float(df_fund_filtered['PBR'].iloc[-2]), 2)
+                    pbr_change = round(latest_pbr - prev_pbr, 2)
+                    pbr_pct = round((pbr_change / prev_pbr) * 100, 2) if prev_pbr != 0 else 0.0
+                    
+                    result["pbr"] = {
+                        "price": latest_pbr,
+                        "changeAmt": pbr_change,
+                        "changePercent": pbr_pct,
+                        "history": pbr_history
+                    }
+                    return result
+        except Exception as e:
+            print(f"Error in task_fundamentals (attempt {attempt + 1}/3): {e}", file=sys.stderr)
+            time.sleep(1.0)
     return result
 
 class KrxMdc(KrxWebIo):
@@ -693,98 +696,125 @@ def task_night_futures(futures_price_ref):
         print(f"Error in task_night_futures: {e}", file=sys.stderr)
     return result
 
-def main():
-    try:
-        today = datetime.now()
-        start_date = (today - timedelta(days=365)).strftime("%Y%m%d")
-        end_date = today.strftime("%Y%m%d")
+def update_krx_cache():
+    """Fetch all K-Market indicators and save to krx_cache.json in-process. Returns the result dict."""
+    today = datetime.now()
+    start_date = (today - timedelta(days=365)).strftime("%Y%m%d")
+    end_date = today.strftime("%Y%m%d")
+    
+    result = {}
+    
+    # Parallel Execution: KOFIA Preload, Naver Futures, and Serialized KRX queries
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        future_preload = executor.submit(task_kofia_preload)
+        future_futures = executor.submit(get_naver_futures_fast)
         
-        result = {}
-        
-        # Parallel Execution using ThreadPoolExecutor
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
-            # 1. Run KOFIA Preload, Naver Futures, fundamentals, ohlcv, and vkospi in parallel
-            future_preload = executor.submit(task_kofia_preload)
-            future_futures = executor.submit(get_naver_futures_fast)
-            future_fundamentals = executor.submit(task_fundamentals, start_date, end_date)
-            future_ohlcv = executor.submit(task_ohlcv_pykrx, start_date, end_date)
-            future_vkospi = executor.submit(task_vkospi, start_date, end_date)
+        # Execute KRX-dependent queries sequentially to prevent session cookie clashes and rate limits
+        def run_krx_tasks():
+            krx_res = {}
+            try:
+                fund_data = task_fundamentals(start_date, end_date)
+                if fund_data:
+                    krx_res.update(fund_data)
+            except Exception as e:
+                print(f"Error in task_fundamentals: {e}", file=sys.stderr)
+                
+            time.sleep(0.3)
+            try:
+                ohlcv_data = task_ohlcv_pykrx(start_date, end_date)
+                if ohlcv_data:
+                    krx_res.update(ohlcv_data)
+            except Exception as e:
+                print(f"Error in task_ohlcv_pykrx: {e}", file=sys.stderr)
+                
+            time.sleep(0.3)
+            try:
+                vkospi_data = task_vkospi(start_date, end_date)
+                if vkospi_data:
+                    krx_res.update(vkospi_data)
+            except Exception as e:
+                print(f"Error in task_vkospi: {e}", file=sys.stderr)
+            return krx_res
             
-            # Wait for KOFIA preload to finish before executing task_local_kofia_adr
+        future_krx = executor.submit(run_krx_tasks)
+        
+        try:
             future_preload.result()
+        except Exception as e:
+            print(f"Error in future_preload: {e}", file=sys.stderr)
             
-            # Run local reading task in parallel now that preload is done
-            future_local = executor.submit(task_local_kofia_adr)
+        future_local = executor.submit(task_local_kofia_adr)
+        
+        try:
+            f_data = future_futures.result()
+            if f_data:
+                result["kospi200_futures"] = f_data
+        except Exception as e:
+            print(f"Error fetching Naver futures in thread: {e}", file=sys.stderr)
             
-            # Gather results
-            try:
-                f_data = future_futures.result()
-                if f_data:
-                    result["kospi200_futures"] = f_data
-            except Exception as e:
-                print(f"Error fetching Naver futures in thread: {e}", file=sys.stderr)
-                
-            try:
-                fund_data = future_fundamentals.result()
-                result.update(fund_data)
-            except Exception as e:
-                print(f"Error fetching fundamentals in thread: {e}", file=sys.stderr)
-                
-            try:
-                ohlcv_data = future_ohlcv.result()
-                result.update(ohlcv_data)
-            except Exception as e:
-                print(f"Error fetching ohlcv in thread: {e}", file=sys.stderr)
-                
-            try:
-                vkospi_data = future_vkospi.result()
-                result.update(vkospi_data)
-            except Exception as e:
-                print(f"Error fetching vkospi in thread: {e}", file=sys.stderr)
-                
-            try:
-                local_data = future_local.result()
+        try:
+            krx_res = future_krx.result()
+            if krx_res:
+                result.update(krx_res)
+        except Exception as e:
+            print(f"Error executing KRX tasks in thread: {e}", file=sys.stderr)
+            
+        try:
+            local_data = future_local.result()
+            if local_data:
                 result.update(local_data)
-            except Exception as e:
-                print(f"Error fetching local data in thread: {e}", file=sys.stderr)
+        except Exception as e:
+            print(f"Error fetching local data in thread: {e}", file=sys.stderr)
 
-        # 2. Run night futures afterwards (since it relies on futures price)
+    # 2. Run night futures afterwards (since it relies on futures price)
+    try:
         futures_price_ref = result.get("kospi200_futures", {}).get("price")
         night_data = task_night_futures(futures_price_ref)
-        result.update(night_data)
+        if night_data:
+            result.update(night_data)
+    except Exception as e:
+        print(f"Error in task_night_futures: {e}", file=sys.stderr)
         
-        # 3. Add metadata for smart freshness checking
+    # 3. Add metadata for smart freshness checking
+    # Only update last_batch_update if fundamentals were successfully gathered
+    if "per" in result and "pbr" in result:
         result["_meta"] = {
             "last_batch_update": datetime.now().isoformat()
         }
-        
-        # ==========================================
-        # Write results to krx_cache.json
-        # ==========================================
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        cache_path = os.path.join(script_dir, 'krx_cache.json')
-        
-        # Merge with existing cache if keys are missing (to prevent accidental overwrite of existing keys)
-        if os.path.exists(cache_path):
-            try:
-                with open(cache_path, 'r', encoding='utf-8') as f:
-                    old_cache = json.load(f)
-                if isinstance(old_cache, dict):
-                    # Keep old keys unless updated
-                    for k, v in old_cache.items():
-                        if k not in result:
-                            result[k] = v
-            except Exception:
-                pass
-                
-        with open(cache_path, 'w', encoding='utf-8') as f:
-            json.dump(result, f, indent=2, ensure_ascii=False)
+    
+    # 4. Write results to krx_cache.json
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    cache_path = os.path.join(script_dir, 'krx_cache.json')
+    
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                old_cache = json.load(f)
+            if isinstance(old_cache, dict):
+                for k, v in old_cache.items():
+                    if k not in result:
+                        result[k] = v
+        except Exception:
+            pass
             
-        print(json.dumps(result, ensure_ascii=False))
+    with open(cache_path, 'w', encoding='utf-8') as f:
+        json.dump(result, f, indent=2, ensure_ascii=False)
         
+    return result
+
+def main():
+    try:
+        t0 = time.time()
+        result = update_krx_cache()
+        elapsed = time.time() - t0
+        print(f"Elapsed: {elapsed:.2f} s, Items: {len(result)}")
+        if "--batch" not in sys.argv:
+            print(json.dumps(result, ensure_ascii=False))
     except Exception as e:
         print(json.dumps({"error": f"Exception occurred: {str(e)}"}), file=sys.stderr)
-        sys.exit(1)
+        if __name__ == "__main__":
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()
+

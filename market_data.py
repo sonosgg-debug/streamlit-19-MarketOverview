@@ -42,24 +42,46 @@ def load_krx_auth():
 
 load_krx_auth()
 
+def get_latest_expected_trading_day():
+    """Return the expected latest trading day string 'YYYY-MM-DD' in KST."""
+    now_kst = datetime.now(KST)
+    # If weekday and after 15:45 KST, today's close should be available
+    if now_kst.weekday() < 5 and (now_kst.hour > 15 or (now_kst.hour == 15 and now_kst.minute >= 45)):
+        return now_kst.strftime("%Y-%m-%d")
+    
+    # Before 15:45 on weekday, or on weekend:
+    # Monday before 15:45 -> last Friday (3 days back)
+    if now_kst.weekday() == 0:
+        days_back = 3
+    elif now_kst.weekday() == 6:  # Sunday -> last Friday (2 days back)
+        days_back = 2
+    elif now_kst.weekday() == 5:  # Saturday -> last Friday (1 day back)
+        days_back = 1
+    else:  # Tuesday-Friday before 15:45 -> yesterday (1 day back)
+        days_back = 1
+    
+    prev_day = now_kst - timedelta(days=days_back)
+    return prev_day.strftime("%Y-%m-%d")
+
 _krx_update_lock = threading.Lock()
 _krx_updating = False
-_krx_thread = None
 
 def trigger_krx_background_update(wait=False):
-    """Trigger get_kospi_fundamentals.py in background (or synchronously if wait=True) if cache is stale or requested."""
-    global _krx_updating, _krx_thread
-    with _krx_update_lock:
-        if _krx_updating:
-            if wait and _krx_thread and _krx_thread.is_alive():
-                pass
-            else:
-                return
-
-    if wait and _krx_updating and _krx_thread and _krx_thread.is_alive():
-        _krx_thread.join(timeout=60)
+    """Trigger update_krx_cache() in-process synchronously if wait=True, or in a background thread."""
+    global _krx_updating
+    if wait:
+        with _krx_update_lock:
+            try:
+                _krx_updating = True
+                from get_kospi_fundamentals import update_krx_cache
+                update_krx_cache()
+            except Exception as e:
+                print(f"Error in synchronous update_krx_cache: {e}")
+            finally:
+                _krx_updating = False
         return
 
+    # Background non-blocking execution
     with _krx_update_lock:
         if _krx_updating:
             return
@@ -68,20 +90,17 @@ def trigger_krx_background_update(wait=False):
     def _worker():
         global _krx_updating
         try:
-            script_path = os.path.join(os.path.dirname(__file__), "get_kospi_fundamentals.py")
-            if os.path.exists(script_path):
-                subprocess.run([sys.executable, script_path, "--batch"], cwd=os.path.dirname(__file__), timeout=180)
+            from get_kospi_fundamentals import update_krx_cache
+            update_krx_cache()
         except Exception as e:
-            print(f"Background KRX cache update error: {e}")
+            print(f"Error in background update_krx_cache: {e}")
         finally:
             with _krx_update_lock:
                 _krx_updating = False
 
-    if wait:
-        _worker()
-    else:
-        _krx_thread = threading.Thread(target=_worker, daemon=True)
-        _krx_thread.start()
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
 
 def get_fear_and_greed():
     """Fetch CNN Fear & Greed Index score and historical data."""
@@ -129,6 +148,7 @@ def get_krx_cache_data(force_update=False, wait=False):
     should_update = False
     if force_update:
         should_update = True
+        wait = True  # Forced update must be synchronous so user sees results immediately
     elif not os.path.exists(cache_path):
         should_update = True
         wait = True  # File doesn't exist, must wait to produce it
@@ -145,20 +165,24 @@ def get_krx_cache_data(force_update=False, wait=False):
             else:
                 should_update = True
 
-            # If weekday after 15:45 KST, check if PER has today's closing data
-            now_kst = datetime.now(KST)
-            if now_kst.weekday() < 5 and (now_kst.hour > 15 or (now_kst.hour == 15 and now_kst.minute >= 45)):
-                per_hist = c_head.get("per", {}).get("history", [])
-                if per_hist:
-                    last_per_date = str(per_hist[-1].get("date", "")).split("T")[0]
-                    today_str = now_kst.strftime("%Y-%m-%d")
-                    if last_per_date < today_str:
-                        should_update = True
+            # Check if PER history has the expected latest trading day's closing data
+            expected_trading_day = get_latest_expected_trading_day()
+            per_hist = c_head.get("per", {}).get("history", [])
+            if per_hist:
+                last_per_date = str(per_hist[-1].get("date", "")).split("T")[0]
+                if last_per_date < expected_trading_day:
+                    should_update = True
+                    wait = True  # Synchronous wait ensures dashboard displays latest trading day on initial load
+            else:
+                should_update = True
+                wait = True
         except Exception:
             should_update = True
+            wait = True
 
     if should_update:
         trigger_krx_background_update(wait=wait)
+
 
     try:
         with open(cache_path, "r", encoding="utf-8") as f:
@@ -322,8 +346,12 @@ def compute_kospi_rsi(ks11_item):
 
 def fetch_kospi_trade_value(existing_item=None):
     """Return KOSPI trading value from KRX cache or pykrx."""
+    expected_day = get_latest_expected_trading_day()
     if existing_item and existing_item.get("price") is not None and existing_item.get("history"):
-        return existing_item
+        last_date = existing_item["history"][-1].get("date", "")
+        if last_date >= expected_day:
+            return existing_item
+
     try:
         from pykrx import stock
         load_krx_auth()

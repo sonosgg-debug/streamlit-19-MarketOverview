@@ -485,9 +485,11 @@ with st.sidebar:
         if st.button("🔄 Update", use_container_width=True, help="캐시를 초기화하고 최신 시장 데이터를 다시 수집합니다."):
             st.cache_data.clear()
             st.session_state.cache_token += 1
+            st.session_state.active_sector = chosen_sector
             st.session_state["just_refreshed"] = True
             st.session_state["refreshing"] = True
             st.rerun()
+
     with col_btn2:
         if st.button("🔍 조회", type="primary", use_container_width=True, help="선택한 시장 및 섹터로 대시보드를 조회합니다."):
             st.cache_data.clear()
