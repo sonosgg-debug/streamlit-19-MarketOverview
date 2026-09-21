@@ -9,7 +9,9 @@ import json
 import requests
 import subprocess
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
 import pandas as pd
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
@@ -144,12 +146,12 @@ def get_krx_cache_data(force_update=False, wait=False):
                 should_update = True
 
             # If weekday after 15:45 KST, check if PER has today's closing data
-            now_dt = datetime.now()
-            if now_dt.weekday() < 5 and (now_dt.hour > 15 or (now_dt.hour == 15 and now_dt.minute >= 45)):
+            now_kst = datetime.now(KST)
+            if now_kst.weekday() < 5 and (now_kst.hour > 15 or (now_kst.hour == 15 and now_kst.minute >= 45)):
                 per_hist = c_head.get("per", {}).get("history", [])
                 if per_hist:
                     last_per_date = str(per_hist[-1].get("date", "")).split("T")[0]
-                    today_str = now_dt.strftime("%Y-%m-%d")
+                    today_str = now_kst.strftime("%Y-%m-%d")
                     if last_per_date < today_str:
                         should_update = True
         except Exception:
@@ -325,8 +327,8 @@ def fetch_kospi_trade_value(existing_item=None):
     try:
         from pykrx import stock
         load_krx_auth()
-        today = datetime.now().strftime("%Y%m%d")
-        start = (datetime.now() - timedelta(days=365)).strftime("%Y%m%d")
+        today = datetime.now(KST).strftime("%Y%m%d")
+        start = (datetime.now(KST) - timedelta(days=365)).strftime("%Y%m%d")
         df_ohlcv = stock.get_index_ohlcv_by_date(start, today, "1001")
         if df_ohlcv is not None and not df_ohlcv.empty:
             df_val = df_ohlcv[df_ohlcv['거래대금'] > 0]
@@ -369,7 +371,7 @@ def fetch_vkospi_direct(existing_item=None):
             def bld(self):
                 return 'dbms/MDC/STAT/standard/MDCSTAT01201'
 
-        today = datetime.now()
+        today = datetime.now(KST)
         start_date = (today - timedelta(days=30)).strftime("%Y%m%d")
         end_date = today.strftime("%Y%m%d")
 
