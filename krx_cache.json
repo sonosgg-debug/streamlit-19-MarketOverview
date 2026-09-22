@@ -4042,10 +4042,6 @@
     "price": 42.42,
     "changeAmt": -0.57,
     "changePercent": -1.33,
-    "open": 42.74,
-    "high": 42.86,
-    "low": 42.23,
-    "close": 42.42,
     "history": [
       {
         "date": "2025-11-28T00:00:00.000Z",
@@ -4847,7 +4843,11 @@
         "date": "2026-09-22T00:00:00.000Z",
         "value": 42.42
       }
-    ]
+    ],
+    "open": 42.74,
+    "high": 42.86,
+    "low": 42.23,
+    "close": 42.42
   },
   "customer_deposits": {
     "price": 981386.13,
@@ -6450,13 +6450,13 @@
     ]
   },
   "kospi200_night": {
-    "price": 1139.2,
-    "changeAmt": 27.2,
-    "changePercent": 2.45,
+    "price": 1136.9,
+    "changeAmt": 24.9,
+    "changePercent": 2.24,
     "open": 1110.2,
-    "high": 1139.75,
+    "high": 1139.95,
     "low": 1110.8,
-    "close": 1139.2,
+    "close": 1136.9,
     "history": [
       {
         "date": "2026-04-24T00:00:00.000Z",
@@ -6872,11 +6872,11 @@
       },
       {
         "date": "2026-09-23T00:00:00.000Z",
-        "value": 1139.2
+        "value": 1136.9
       }
     ]
   },
   "_meta": {
-    "last_batch_update": "2026-09-23T03:09:40.435612"
+    "last_batch_update": "2026-09-23T03:27:51.230337"
   }
 }

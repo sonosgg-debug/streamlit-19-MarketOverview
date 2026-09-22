@@ -161,7 +161,7 @@ def get_krx_cache_data(force_update=False, wait=False):
     should_update = False
     if force_update:
         should_update = True
-        wait = True  # Forced update must be synchronous so user sees results immediately
+        wait = False  # Always non-blocking in background so Streamlit UI never freezes
     elif not os.path.exists(cache_path):
         should_update = True
         wait = False  # File doesn't exist, don't freeze page load forever
@@ -360,13 +360,8 @@ def compute_kospi_rsi(ks11_item):
 
 def fetch_kospi_trade_value(existing_item=None):
     """Return KOSPI trading value from KRX cache or pykrx."""
-    expected_day = get_latest_expected_trading_day()
-    now_kst = datetime.now(KST)
-    is_market_open = (now_kst.weekday() < 5 and 9 <= now_kst.hour < 16)
-    if existing_item and existing_item.get("price") is not None and existing_item.get("history"):
-        last_date = str(existing_item["history"][-1].get("date", "")).split("T")[0]
-        if not is_market_open and last_date >= expected_day:
-            return existing_item
+    if existing_item and existing_item.get("price") is not None:
+        return existing_item
 
     try:
         from pykrx import stock
@@ -406,13 +401,8 @@ def fetch_kospi_trade_value(existing_item=None):
 
 def fetch_vkospi_direct(existing_item=None):
     """Fetch live VKOSPI from KRX MDCSTAT01201 using PyKRX."""
-    expected_day = get_latest_expected_trading_day()
-    now_kst = datetime.now(KST)
-    is_market_open = (now_kst.weekday() < 5 and 9 <= now_kst.hour < 16)
-    if existing_item and existing_item.get("price") is not None and existing_item.get("history"):
-        last_date = str(existing_item["history"][-1].get("date", "")).split("T")[0]
-        if not is_market_open and last_date >= expected_day:
-            return existing_item
+    if existing_item and existing_item.get("price") is not None:
+        return existing_item
 
     try:
         load_krx_auth()

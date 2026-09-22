@@ -425,8 +425,7 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 # Data fetching with Streamlit caching (3 minutes TTL)
 @st.cache_data(ttl=180)
 def get_cached_market_data(cache_token=0):
-    wait = (cache_token > 0)
-    return fetch_all_market_data(force_refresh=wait, wait_for_krx=wait), datetime.now(KST)
+    return fetch_all_market_data(force_refresh=(cache_token > 0), wait_for_krx=False), datetime.now(KST)
 
 # Token to allow explicit cache invalidation
 if "cache_token" not in st.session_state:
@@ -492,10 +491,6 @@ with st.sidebar:
 
     with col_btn2:
         if st.button("🔍 조회", type="primary", use_container_width=True, help="선택한 시장 및 섹터로 대시보드를 조회합니다."):
-            st.cache_data.clear()
-            st.session_state.cache_token += 1
-            st.session_state["just_refreshed"] = True
-            st.session_state["refreshing"] = True
             st.session_state.active_sector = chosen_sector
             st.rerun()
 
