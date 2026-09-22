@@ -9,6 +9,8 @@ import json
 import requests
 import subprocess
 import threading
+import socket
+socket.setdefaulttimeout(5.0)
 from datetime import datetime, timedelta, timezone
 
 KST = timezone(timedelta(hours=9))
@@ -67,14 +69,25 @@ _krx_update_lock = threading.Lock()
 _krx_updating = False
 
 def trigger_krx_background_update(wait=False):
-    """Trigger update_krx_cache() in-process synchronously if wait=True, or in a background thread."""
+    """Trigger update_krx_cache() in background or with safety timeout if wait=True."""
     global _krx_updating
     if wait:
         with _krx_update_lock:
             try:
                 _krx_updating = True
                 from get_kospi_fundamentals import update_krx_cache
-                update_krx_cache()
+                # Run with safety timeout so Cloud IP blocks don't freeze indefinitely
+                def _run():
+                    try:
+                        update_krx_cache()
+                    except Exception as err:
+                        print(f"Error in update_krx_cache worker: {err}")
+
+                worker_t = threading.Thread(target=_run, daemon=True)
+                worker_t.start()
+                worker_t.join(timeout=10.0)
+                if worker_t.is_alive():
+                    print("Warning: update_krx_cache timed out after 10.0s, proceeding with existing cache.")
             except Exception as e:
                 print(f"Error in synchronous update_krx_cache: {e}")
             finally:
@@ -151,7 +164,7 @@ def get_krx_cache_data(force_update=False, wait=False):
         wait = True  # Forced update must be synchronous so user sees results immediately
     elif not os.path.exists(cache_path):
         should_update = True
-        wait = True  # File doesn't exist, must wait to produce it
+        wait = False  # File doesn't exist, don't freeze page load forever
     else:
         try:
             with open(cache_path, "r", encoding="utf-8") as f:
@@ -172,13 +185,14 @@ def get_krx_cache_data(force_update=False, wait=False):
                 last_per_date = str(per_hist[-1].get("date", "")).split("T")[0]
                 if last_per_date < expected_trading_day:
                     should_update = True
-                    wait = True  # Synchronous wait ensures dashboard displays latest trading day on initial load
+                    # Routine visit must remain non-blocking (wait=False) so UI renders immediately
+                    wait = False
             else:
                 should_update = True
-                wait = True
+                wait = False
         except Exception:
             should_update = True
-            wait = True
+            wait = False
 
     if should_update:
         trigger_krx_background_update(wait=wait)
@@ -347,9 +361,11 @@ def compute_kospi_rsi(ks11_item):
 def fetch_kospi_trade_value(existing_item=None):
     """Return KOSPI trading value from KRX cache or pykrx."""
     expected_day = get_latest_expected_trading_day()
+    now_kst = datetime.now(KST)
+    is_market_open = (now_kst.weekday() < 5 and 9 <= now_kst.hour < 16)
     if existing_item and existing_item.get("price") is not None and existing_item.get("history"):
-        last_date = existing_item["history"][-1].get("date", "")
-        if last_date >= expected_day:
+        last_date = str(existing_item["history"][-1].get("date", "")).split("T")[0]
+        if not is_market_open and last_date >= expected_day:
             return existing_item
 
     try:
@@ -390,6 +406,14 @@ def fetch_kospi_trade_value(existing_item=None):
 
 def fetch_vkospi_direct(existing_item=None):
     """Fetch live VKOSPI from KRX MDCSTAT01201 using PyKRX."""
+    expected_day = get_latest_expected_trading_day()
+    now_kst = datetime.now(KST)
+    is_market_open = (now_kst.weekday() < 5 and 9 <= now_kst.hour < 16)
+    if existing_item and existing_item.get("price") is not None and existing_item.get("history"):
+        last_date = str(existing_item["history"][-1].get("date", "")).split("T")[0]
+        if not is_market_open and last_date >= expected_day:
+            return existing_item
+
     try:
         load_krx_auth()
         from pykrx.website.krx.krxio import KrxWebIo
@@ -728,7 +752,10 @@ def fetch_all_market_data(force_refresh=False, wait_for_krx=False):
         fut_naver = executor.map(fetch_naver_price, korean_tickers)
         fut_vkospi = executor.submit(fetch_vkospi_direct, all_data.get("VKOSPI"))
         naver_results = list(fut_naver)
-        vk_item = fut_vkospi.result()
+        try:
+            vk_item = fut_vkospi.result(timeout=4.0)
+        except Exception:
+            vk_item = all_data.get("VKOSPI")
 
     for item in naver_results:
         if item:

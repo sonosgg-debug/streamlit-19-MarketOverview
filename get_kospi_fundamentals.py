@@ -2,6 +2,8 @@ import os
 import sys
 import json
 import time
+import socket
+socket.setdefaulttimeout(5.0)
 from datetime import datetime, timedelta
 import concurrent.futures
 import requests
@@ -256,7 +258,7 @@ def task_kofia_preload():
 
 def task_fundamentals(start_date, end_date):
     result = {}
-    for attempt in range(3):
+    for attempt in range(2):
         try:
             df_fund = stock.get_index_fundamental(start_date, end_date, "1001")
             if df_fund is not None and not df_fund.empty:
@@ -293,8 +295,8 @@ def task_fundamentals(start_date, end_date):
                     }
                     return result
         except Exception as e:
-            print(f"Error in task_fundamentals (attempt {attempt + 1}/3): {e}", file=sys.stderr)
-            time.sleep(1.0)
+            print(f"Error in task_fundamentals (attempt {attempt + 1}/2): {e}", file=sys.stderr)
+            time.sleep(0.3)
     return result
 
 class KrxMdc(KrxWebIo):
@@ -465,102 +467,97 @@ def task_local_kofia_adr():
 
         # Read & Compute KOSPI ADR(20, %)
         adr_path = r"D:\AI Investing\Daily_Check_K\adv_dec_history.json"
-        
-        # Scrape and update today's KOSPI advance/decline counts first to ensure we have the latest ADR
-        try:
-            headers = {"User-Agent": "Mozilla/5.0"}
-            url = 'https://finance.naver.com/sise/sise_index.naver?code=KOSPI'
-            res = requests.get(url, headers=headers, timeout=5)
-            if res.status_code == 200:
-                soup = BeautifulSoup(res.content.decode('euc-kr', 'replace'), 'html.parser')
-                
-                # 1. Parse date from span id="time"
-                time_span = soup.find('span', id='time')
-                parsed_date = None
-                if time_span:
-                    text = time_span.text.strip()
-                    match = re.search(r'(\d{4})\.(\d{2})\.(\d{2})', text)
-                    if match:
-                        parsed_date = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
-                
-                # 2. Parse rise/fall counts
-                subtop = soup.find('div', class_='subtop_sise_detail')
-                if subtop and parsed_date:
-                    tbl = subtop.find('table', class_='table_kos_index')
-                    if tbl:
-                        lst_sh = tbl.find('li', class_='lst')
-                        lst_ss = tbl.find('li', class_='lst2')
-                        lst_hr = tbl.find('li', class_='lst4')
-                        lst_hh = tbl.find('li', class_='lst5')
-                        
-                        sanghan = int(lst_sh.find('a').find('span').text.replace(',', '')) if lst_sh else 0
-                        sangseung = int(lst_ss.find('a').find('span').text.replace(',', '')) if lst_ss else 0
-                        harak = int(lst_hr.find('a').find('span').text.replace(',', '')) if lst_hr else 0
-                        hahan = int(lst_hh.find('a').find('span').text.replace(',', '')) if lst_hh else 0
-                        
-                        adv = sanghan + sangseung
-                        dec = harak + hahan
-                        
-                        if adv != 0 or dec != 0:
-                            history = []
-                            if os.path.exists(adr_path):
+        if os.path.exists(adr_path):
+            # Scrape and update today's KOSPI advance/decline counts first to ensure we have the latest ADR
+            try:
+                headers = {"User-Agent": "Mozilla/5.0"}
+                url = 'https://finance.naver.com/sise/sise_index.naver?code=KOSPI'
+                res = requests.get(url, headers=headers, timeout=5)
+                if res.status_code == 200:
+                    soup = BeautifulSoup(res.content.decode('euc-kr', 'replace'), 'html.parser')
+                    
+                    # 1. Parse date from span id="time"
+                    time_span = soup.find('span', id='time')
+                    parsed_date = None
+                    if time_span:
+                        text = time_span.text.strip()
+                        match = re.search(r'(\d{4})\.(\d{2})\.(\d{2})', text)
+                        if match:
+                            parsed_date = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+                    
+                    # 2. Parse rise/fall counts
+                    subtop = soup.find('div', class_='subtop_sise_detail')
+                    if subtop and parsed_date:
+                        tbl = subtop.find('table', class_='table_kos_index')
+                        if tbl:
+                            lst_sh = tbl.find('li', class_='lst')
+                            lst_ss = tbl.find('li', class_='lst2')
+                            lst_hr = tbl.find('li', class_='lst4')
+                            lst_hh = tbl.find('li', class_='lst5')
+                            
+                            sanghan = int(lst_sh.find('a').find('span').text.replace(',', '')) if lst_sh else 0
+                            sangseung = int(lst_ss.find('a').find('span').text.replace(',', '')) if lst_ss else 0
+                            harak = int(lst_hr.find('a').find('span').text.replace(',', '')) if lst_hr else 0
+                            hahan = int(lst_hh.find('a').find('span').text.replace(',', '')) if lst_hh else 0
+                            
+                            adv = sanghan + sangseung
+                            dec = harak + hahan
+                            
+                            if adv != 0 or dec != 0:
+                                history = []
                                 with open(adr_path, "r", encoding="utf-8") as f:
                                     history = json.load(f)
-                            
-                            found = False
-                            for item in history:
-                                if item['date'] == parsed_date:
-                                    item['adv'] = adv
-                                    item['dec'] = dec
-                                    found = True
-                                    break
-                            
-                            if not found:
-                                history.append({'date': parsed_date, 'adv': adv, 'dec': dec})
-                            
-                            history.sort(key=lambda x: x['date'])
-                            history = history[-250:]
-                            with open(adr_path, "w", encoding="utf-8") as f:
-                                json.dump(history, f, indent=4)
-        except Exception as adr_up_err:
-            print(f"Error updating ADR history in scraper: {adr_up_err}", file=sys.stderr)
+                                
+                                found = False
+                                for item in history:
+                                    if item['date'] == parsed_date:
+                                        item['adv'] = adv
+                                        item['dec'] = dec
+                                        found = True
+                                        break
+                                
+                                if not found:
+                                    history.append({'date': parsed_date, 'adv': adv, 'dec': dec})
+                                
+                                history.sort(key=lambda x: x['date'])
+                                history = history[-250:]
+                                with open(adr_path, "w", encoding="utf-8") as f:
+                                    json.dump(history, f, indent=4)
+            except Exception as adr_up_err:
+                print(f"Error updating ADR history in scraper: {adr_up_err}", file=sys.stderr)
 
-        # Backfill any missing recent business days via pykrx
-        try:
-            if os.path.exists(adr_path):
+            # Backfill any missing recent business days via pykrx
+            try:
                 with open(adr_path, "r", encoding="utf-8") as f:
                     history = json.load(f)
-            else:
-                history = []
-            
-            existing_dates = {item['date'] for item in history}
-            today_dt = datetime.now()
-            needs_save = False
-            for i in range(1, 8):
-                check_dt = today_dt - timedelta(days=i)
-                if check_dt.weekday() < 5:
-                    d_str = check_dt.strftime("%Y-%m-%d")
-                    if d_str not in existing_dates:
-                        try:
-                            df_change = stock.get_market_price_change_by_ticker(d_str.replace('-', ''), d_str.replace('-', ''), market='KOSPI')
-                            if df_change is not None and not df_change.empty:
-                                adv = len(df_change[df_change['등락률'] > 0])
-                                dec = len(df_change[df_change['등락률'] < 0])
-                                if adv > 0 or dec > 0:
-                                    history.append({'date': d_str, 'adv': adv, 'dec': dec})
-                                    existing_dates.add(d_str)
-                                    needs_save = True
-                        except Exception:
-                            pass
-            if needs_save:
-                history.sort(key=lambda x: x['date'])
-                history = history[-250:]
-                with open(adr_path, "w", encoding="utf-8") as f:
-                    json.dump(history, f, indent=4)
-        except Exception as pykrx_adr_err:
-            print(f"Error backfilling ADR via pykrx: {pykrx_adr_err}", file=sys.stderr)
+                
+                existing_dates = {item['date'] for item in history}
+                today_dt = datetime.now()
+                needs_save = False
+                for i in range(1, 8):
+                    check_dt = today_dt - timedelta(days=i)
+                    if check_dt.weekday() < 5:
+                        d_str = check_dt.strftime("%Y-%m-%d")
+                        if d_str not in existing_dates:
+                            try:
+                                df_change = stock.get_market_price_change_by_ticker(d_str.replace('-', ''), d_str.replace('-', ''), market='KOSPI')
+                                if df_change is not None and not df_change.empty:
+                                    adv = len(df_change[df_change['등락률'] > 0])
+                                    dec = len(df_change[df_change['등락률'] < 0])
+                                    if adv > 0 or dec > 0:
+                                        history.append({'date': d_str, 'adv': adv, 'dec': dec})
+                                        existing_dates.add(d_str)
+                                        needs_save = True
+                            except Exception:
+                                pass
+                if needs_save:
+                    history.sort(key=lambda x: x['date'])
+                    history = history[-250:]
+                    with open(adr_path, "w", encoding="utf-8") as f:
+                        json.dump(history, f, indent=4)
+            except Exception as pykrx_adr_err:
+                print(f"Error backfilling ADR via pykrx: {pykrx_adr_err}", file=sys.stderr)
 
-        if os.path.exists(adr_path):
             with open(adr_path, "r", encoding="utf-8") as f:
                 adr_data = json.load(f)
             if adr_data and len(adr_data) >= 20:
