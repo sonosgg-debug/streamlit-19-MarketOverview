@@ -500,14 +500,17 @@ SECTOR_OPTIONS = ["US Market", "K Market", "Semiconductor"]
 
 with st.sidebar:
     st.markdown(
-        '<div style="padding: 4px 0 16px 0;">'
-        '<div style="font-size: 17px; font-weight: 700; color: #f8fafc; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px;">'
-        '<span>📊</span> 시장 및 섹터 선택'
-        '</div>'
-        '<div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">'
-        '조회할 시장 또는 섹터를 선택하세요.'
-        '</div>'
-        '</div>',
+        """
+        <div style='padding: 2px 0 14px 0;'>
+            <div style='font-size: 1.25rem; font-weight: 700; color: #f8fafc; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px;'>
+                <span>⚙️</span> 시장 및 섹터 선택
+            </div>
+            <div style='font-size: 0.82rem; color: #94a3b8; margin-top: 4px;'>
+                조회할 글로벌 시장 또는 섹터를 선택하세요.
+            </div>
+        </div>
+        <hr style='border: 0; height: 1px; background-color: #334155; margin: 12px 0 16px 0;'>
+        """,
         unsafe_allow_html=True
     )
 
