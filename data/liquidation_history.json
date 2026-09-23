@@ -1,0 +1,410 @@
+[
+    {
+        "date": "2026-04-24",
+        "liquidation": 116.16
+    },
+    {
+        "date": "2026-04-27",
+        "liquidation": 78.27
+    },
+    {
+        "date": "2026-04-28",
+        "liquidation": 175.70000000000002
+    },
+    {
+        "date": "2026-04-29",
+        "liquidation": 78.95
+    },
+    {
+        "date": "2026-04-30",
+        "liquidation": 146.98
+    },
+    {
+        "date": "2026-05-04",
+        "liquidation": 198.36
+    },
+    {
+        "date": "2026-05-06",
+        "liquidation": 71.64
+    },
+    {
+        "date": "2026-05-07",
+        "liquidation": 113.79
+    },
+    {
+        "date": "2026-05-08",
+        "liquidation": 210.11
+    },
+    {
+        "date": "2026-05-11",
+        "liquidation": 694.02
+    },
+    {
+        "date": "2026-05-12",
+        "liquidation": 369.36
+    },
+    {
+        "date": "2026-05-13",
+        "liquidation": 235.65
+    },
+    {
+        "date": "2026-05-14",
+        "liquidation": 244.82
+    },
+    {
+        "date": "2026-05-15",
+        "liquidation": 374.86
+    },
+    {
+        "date": "2026-05-18",
+        "liquidation": 917.0600000000001
+    },
+    {
+        "date": "2026-05-19",
+        "liquidation": 676.54
+    },
+    {
+        "date": "2026-05-20",
+        "liquidation": 1458.42
+    },
+    {
+        "date": "2026-05-21",
+        "liquidation": 624.5600000000001
+    },
+    {
+        "date": "2026-05-22",
+        "liquidation": 523.99
+    },
+    {
+        "date": "2026-05-26",
+        "liquidation": 51.7
+    },
+    {
+        "date": "2026-05-27",
+        "liquidation": 79.84
+    },
+    {
+        "date": "2026-05-28",
+        "liquidation": 78.12
+    },
+    {
+        "date": "2026-05-29",
+        "liquidation": 154.14000000000001
+    },
+    {
+        "date": "2026-06-01",
+        "liquidation": 331.71
+    },
+    {
+        "date": "2026-06-02",
+        "liquidation": 168.45000000000002
+    },
+    {
+        "date": "2026-06-04",
+        "liquidation": 243.11
+    },
+    {
+        "date": "2026-06-05",
+        "liquidation": 1661.92
+    },
+    {
+        "date": "2026-06-08",
+        "liquidation": 1391.34
+    },
+    {
+        "date": "2026-06-09",
+        "liquidation": 1697.96
+    },
+    {
+        "date": "2026-06-10",
+        "liquidation": 396.61
+    },
+    {
+        "date": "2026-06-11",
+        "liquidation": 306.2
+    },
+    {
+        "date": "2026-06-12",
+        "liquidation": 476.85
+    },
+    {
+        "date": "2026-06-15",
+        "liquidation": 100.81
+    },
+    {
+        "date": "2026-06-16",
+        "liquidation": 50.95
+    },
+    {
+        "date": "2026-06-17",
+        "liquidation": 120.35000000000001
+    },
+    {
+        "date": "2026-06-18",
+        "liquidation": 141.87
+    },
+    {
+        "date": "2026-06-19",
+        "liquidation": 234.79
+    },
+    {
+        "date": "2026-06-22",
+        "liquidation": 198.91
+    },
+    {
+        "date": "2026-06-23",
+        "liquidation": 424.27
+    },
+    {
+        "date": "2026-06-24",
+        "liquidation": 1107.93
+    },
+    {
+        "date": "2026-06-25",
+        "liquidation": 476.53000000000003
+    },
+    {
+        "date": "2026-06-26",
+        "liquidation": 509.77000000000004
+    },
+    {
+        "date": "2026-06-29",
+        "liquidation": 494.42
+    },
+    {
+        "date": "2026-06-30",
+        "liquidation": 694.0600000000001
+    },
+    {
+        "date": "2026-07-01",
+        "liquidation": 257.27
+    },
+    {
+        "date": "2026-07-02",
+        "liquidation": 196.35
+    },
+    {
+        "date": "2026-07-03",
+        "liquidation": 563.6
+    },
+    {
+        "date": "2026-07-06",
+        "liquidation": 396.98
+    },
+    {
+        "date": "2026-07-07",
+        "liquidation": 317.41
+    },
+    {
+        "date": "2026-07-08",
+        "liquidation": 288.46
+    },
+    {
+        "date": "2026-07-09",
+        "liquidation": 1421.97
+    },
+    {
+        "date": "2026-07-10",
+        "liquidation": 816.13
+    },
+    {
+        "date": "2026-07-13",
+        "liquidation": 262.4
+    },
+    {
+        "date": "2026-07-14",
+        "liquidation": 215.63
+    },
+    {
+        "date": "2026-07-15",
+        "liquidation": 384.67
+    },
+    {
+        "date": "2026-07-16",
+        "liquidation": 148.24
+    },
+    {
+        "date": "2026-07-20",
+        "liquidation": 528.4300000000001
+    },
+    {
+        "date": "2026-07-21",
+        "liquidation": 595.96
+    },
+    {
+        "date": "2026-07-22",
+        "liquidation": 149.23
+    },
+    {
+        "date": "2026-07-23",
+        "liquidation": 72.08
+    },
+    {
+        "date": "2026-07-24",
+        "liquidation": 74.88
+    },
+    {
+        "date": "2026-07-27",
+        "liquidation": 229.61
+    },
+    {
+        "date": "2026-07-28",
+        "liquidation": 138.9
+    },
+    {
+        "date": "2026-07-29",
+        "liquidation": 611.33
+    },
+    {
+        "date": "2026-07-30",
+        "liquidation": 1037.89
+    },
+    {
+        "date": "2026-07-31",
+        "liquidation": 1220.1200000000001
+    },
+    {
+        "date": "2026-08-03",
+        "liquidation": 223.71
+    },
+    {
+        "date": "2026-08-04",
+        "liquidation": 315.35
+    },
+    {
+        "date": "2026-08-05",
+        "liquidation": 117.68
+    },
+    {
+        "date": "2026-08-06",
+        "liquidation": 106.94
+    },
+    {
+        "date": "2026-08-07",
+        "liquidation": 234.43
+    },
+    {
+        "date": "2026-08-10",
+        "liquidation": 408.57
+    },
+    {
+        "date": "2026-08-11",
+        "liquidation": 182.85
+    },
+    {
+        "date": "2026-08-12",
+        "liquidation": 57.33
+    },
+    {
+        "date": "2026-08-13",
+        "liquidation": 50.04
+    },
+    {
+        "date": "2026-08-14",
+        "liquidation": 37.68
+    },
+    {
+        "date": "2026-08-18",
+        "liquidation": 64.45
+    },
+    {
+        "date": "2026-08-19",
+        "liquidation": 55.56
+    },
+    {
+        "date": "2026-08-20",
+        "liquidation": 93.54
+    },
+    {
+        "date": "2026-08-21",
+        "liquidation": 484.33
+    },
+    {
+        "date": "2026-08-24",
+        "liquidation": 59.85
+    },
+    {
+        "date": "2026-08-25",
+        "liquidation": 92.05
+    },
+    {
+        "date": "2026-08-26",
+        "liquidation": 127.01
+    },
+    {
+        "date": "2026-08-27",
+        "liquidation": 248.71
+    },
+    {
+        "date": "2026-08-28",
+        "liquidation": 47.97
+    },
+    {
+        "date": "2026-08-31",
+        "liquidation": 66.5
+    },
+    {
+        "date": "2026-09-01",
+        "liquidation": 89.09
+    },
+    {
+        "date": "2026-09-02",
+        "liquidation": 149.76
+    },
+    {
+        "date": "2026-09-03",
+        "liquidation": 105.95
+    },
+    {
+        "date": "2026-09-04",
+        "liquidation": 260.63
+    },
+    {
+        "date": "2026-09-07",
+        "liquidation": 90.74
+    },
+    {
+        "date": "2026-09-08",
+        "liquidation": 32.44
+    },
+    {
+        "date": "2026-09-09",
+        "liquidation": 22.64
+    },
+    {
+        "date": "2026-09-10",
+        "liquidation": 58.36
+    },
+    {
+        "date": "2026-09-11",
+        "liquidation": 99.4
+    },
+    {
+        "date": "2026-09-14",
+        "liquidation": 108.65
+    },
+    {
+        "date": "2026-09-15",
+        "liquidation": 180.57
+    },
+    {
+        "date": "2026-09-16",
+        "liquidation": 173.66
+    },
+    {
+        "date": "2026-09-17",
+        "liquidation": 246.2
+    },
+    {
+        "date": "2026-09-18",
+        "liquidation": 46.37
+    },
+    {
+        "date": "2026-09-21",
+        "liquidation": 36.35
+    },
+    {
+        "date": "2026-09-22",
+        "liquidation": 36.87
+    }
+]

@@ -85,9 +85,9 @@ def trigger_krx_background_update(wait=False):
 
                 worker_t = threading.Thread(target=_run, daemon=True)
                 worker_t.start()
-                worker_t.join(timeout=10.0)
+                worker_t.join(timeout=20.0)
                 if worker_t.is_alive():
-                    print("Warning: update_krx_cache timed out after 10.0s, proceeding with existing cache.")
+                    print("Warning: update_krx_cache timed out after 20.0s, proceeding with existing cache.")
             except Exception as e:
                 print(f"Error in synchronous update_krx_cache: {e}")
             finally:
@@ -161,10 +161,10 @@ def get_krx_cache_data(force_update=False, wait=False):
     should_update = False
     if force_update:
         should_update = True
-        wait = False  # Always non-blocking in background so Streamlit UI never freezes
+        wait = True
     elif not os.path.exists(cache_path):
         should_update = True
-        wait = False  # File doesn't exist, don't freeze page load forever
+        wait = True  # File doesn't exist, must wait so first run has data
     else:
         try:
             with open(cache_path, "r", encoding="utf-8") as f:
@@ -185,14 +185,10 @@ def get_krx_cache_data(force_update=False, wait=False):
                 last_per_date = str(per_hist[-1].get("date", "")).split("T")[0]
                 if last_per_date < expected_trading_day:
                     should_update = True
-                    # Routine visit must remain non-blocking (wait=False) so UI renders immediately
-                    wait = False
             else:
                 should_update = True
-                wait = False
         except Exception:
             should_update = True
-            wait = False
 
     if should_update:
         trigger_krx_background_update(wait=wait)
@@ -550,7 +546,7 @@ def fetch_kospi200_night_direct(existing_item=None, futures_item=None):
 
                 # Load history from existing_item or local file
                 history = []
-                night_path = r"D:\AI Investing\Daily_Check\DailyData\kospif_ngt_history.json"
+                night_path = os.path.join(os.path.dirname(__file__), "data", "kospif_ngt_history.json")
                 if os.path.exists(night_path):
                     try:
                         with open(night_path, "r", encoding="utf-8") as f:

@@ -59,6 +59,12 @@ if "--batch" in sys.argv:
     # Silence stdout but keep stderr for error logging
     sys.stdout = open(os.devnull, 'w', encoding='utf-8')
 
+def get_data_path(filename):
+    """Return absolute path to a file inside the local data/ directory, fully independent of X_old."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(script_dir, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    return os.path.join(data_dir, filename)
 
 def format_iso_date(date_str):
     # Convert 'YYYY-MM-DD' or datetime to 'YYYY-MM-DDT00:00:00.000Z'
@@ -221,40 +227,49 @@ def task_kofia_preload():
         
         # Fetch deposits & credit
         deposit_map, credit_map = fetch_kofia_deposits_credit(start_date_k, end_date_k)
-        dep_path = r"D:\AI Investing\Daily_Check_K\deposits_history.json"
+        dep_path = get_data_path("deposits_history.json")
+        dep_history = []
         if os.path.exists(dep_path):
-            with open(dep_path, "r", encoding="utf-8") as f:
-                dep_history = json.load(f)
-            hist_map = {item['date']: item for item in dep_history}
-            common_dates = set(deposit_map.keys()) & set(credit_map.keys())
-            for d_str in common_dates:
-                hist_map[d_str] = {
-                    'date': d_str,
-                    'deposit': deposit_map[d_str],
-                    'credit': credit_map[d_str]
-                }
-            new_dep_history = list(hist_map.values())
-            new_dep_history.sort(key=lambda x: x['date'])
-            new_dep_history = new_dep_history[-250:]
-            with open(dep_path, "w", encoding="utf-8") as f:
-                json.dump(new_dep_history, f, indent=4)
+            try:
+                with open(dep_path, "r", encoding="utf-8") as f:
+                    dep_history = json.load(f)
+            except Exception:
+                dep_history = []
+        hist_map = {item['date']: item for item in dep_history}
+        common_dates = set(deposit_map.keys()) & set(credit_map.keys())
+        for d_str in common_dates:
+            hist_map[d_str] = {
+                'date': d_str,
+                'deposit': deposit_map[d_str],
+                'credit': credit_map[d_str]
+            }
+        new_dep_history = list(hist_map.values())
+        new_dep_history.sort(key=lambda x: x['date'])
+        new_dep_history = new_dep_history[-250:]
+        with open(dep_path, "w", encoding="utf-8") as f:
+            json.dump(new_dep_history, f, indent=4)
         
         # Fetch liquidation
         liq_map = fetch_kofia_liquidation(start_date_k, end_date_k)
-        liq_path = r"D:\AI Investing\Daily_Check_K\liquidation_history.json"
+        liq_path = get_data_path("liquidation_history.json")
+        liq_history = []
         if os.path.exists(liq_path):
-            with open(liq_path, "r", encoding="utf-8") as f:
-                liq_history = json.load(f)
-            hist_map_liq = {item['date']: item['liquidation'] for item in liq_history}
-            for d_str, val in liq_map.items():
-                hist_map_liq[d_str] = val
-            new_liq_history = [{"date": d, "liquidation": v} for d, v in hist_map_liq.items()]
-            new_liq_history.sort(key=lambda x: x['date'])
-            new_liq_history = new_liq_history[-250:]
-            with open(liq_path, "w", encoding="utf-8") as f:
-                json.dump(new_liq_history, f, indent=4)
+            try:
+                with open(liq_path, "r", encoding="utf-8") as f:
+                    liq_history = json.load(f)
+            except Exception:
+                liq_history = []
+        hist_map_liq = {item['date']: item['liquidation'] for item in liq_history}
+        for d_str, val in liq_map.items():
+            hist_map_liq[d_str] = val
+        new_liq_history = [{"date": d, "liquidation": v} for d, v in hist_map_liq.items()]
+        new_liq_history.sort(key=lambda x: x['date'])
+        new_liq_history = new_liq_history[-250:]
+        with open(liq_path, "w", encoding="utf-8") as f:
+            json.dump(new_liq_history, f, indent=4)
     except Exception as kofia_err:
         print(f"Error updating KOFIA data in background scraper: {kofia_err}", file=sys.stderr)
+
 
 def task_fundamentals(start_date, end_date):
     result = {}
@@ -406,11 +421,63 @@ def task_ohlcv_pykrx(start_date, end_date):
         print(f"Error in task_ohlcv_pykrx: {e}", file=sys.stderr)
     return result
 
+def sync_adr_history_pykrx():
+    """Sync recent trading days' advance/decline counts to data/adv_dec_history.json via pykrx."""
+    adr_path = get_data_path("adv_dec_history.json")
+    history = []
+    if os.path.exists(adr_path):
+        try:
+            with open(adr_path, "r", encoding="utf-8") as f:
+                history = json.load(f)
+        except Exception:
+            history = []
+            
+    existing_dates = {item['date'] for item in history}
+    today_dt = datetime.now()
+    needs_save = False
+    
+    # Check today (if after 15:30 KST on weekday) and the last 10 days
+    check_days = []
+    if today_dt.weekday() < 5 and (today_dt.hour > 15 or (today_dt.hour == 15 and today_dt.minute >= 30)):
+        check_days.append(today_dt)
+    for i in range(1, 10):
+        d = today_dt - timedelta(days=i)
+        if d.weekday() < 5:
+            check_days.append(d)
+            
+    check_days.sort()
+    for check_dt in check_days:
+        d_str = check_dt.strftime("%Y-%m-%d")
+        if d_str not in existing_dates:
+            for attempt in range(2):
+                try:
+                    time.sleep(0.3)
+                    df_change = stock.get_market_price_change_by_ticker(d_str.replace('-', ''), d_str.replace('-', ''), market='KOSPI')
+                    if df_change is not None and not df_change.empty:
+                        adv = len(df_change[df_change['등락률'] > 0])
+                        dec = len(df_change[df_change['등락률'] < 0])
+                        if adv > 0 or dec > 0:
+                            history.append({'date': d_str, 'adv': adv, 'dec': dec})
+                            existing_dates.add(d_str)
+                            needs_save = True
+                            break
+                except Exception as e:
+                    print(f"Error fetching advance/decline for {d_str} (attempt {attempt + 1}): {e}", file=sys.stderr)
+                    time.sleep(0.5)
+                
+    if needs_save:
+        history.sort(key=lambda x: x['date'])
+        history = history[-250:]
+        with open(adr_path, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=4)
+            
+    return history
+
 def task_local_kofia_adr():
     result = {}
     try:
-        # Read Customer Deposits & Credit Balance
-        dep_path = r"D:\AI Investing\Daily_Check_K\deposits_history.json"
+        # Read Customer Deposits & Credit Balance from local data/
+        dep_path = get_data_path("deposits_history.json")
         if os.path.exists(dep_path):
             with open(dep_path, "r", encoding="utf-8") as f:
                 dep_data = json.load(f)
@@ -445,8 +512,8 @@ def task_local_kofia_adr():
                     "history": cred_history
                 }
 
-        # Read Margin Call / Liquidation Amount
-        liq_path = r"D:\AI Investing\Daily_Check_K\liquidation_history.json"
+        # Read Margin Call / Liquidation Amount from local data/
+        liq_path = get_data_path("liquidation_history.json")
         if os.path.exists(liq_path):
             with open(liq_path, "r", encoding="utf-8") as f:
                 liq_data = json.load(f)
@@ -465,99 +532,9 @@ def task_local_kofia_adr():
                     "history": liq_history
                 }
 
-        # Read & Compute KOSPI ADR(20, %)
-        adr_path = r"D:\AI Investing\Daily_Check_K\adv_dec_history.json"
+        # Compute KOSPI ADR(20, %) from local data/
+        adr_path = get_data_path("adv_dec_history.json")
         if os.path.exists(adr_path):
-            # Scrape and update today's KOSPI advance/decline counts first to ensure we have the latest ADR
-            try:
-                headers = {"User-Agent": "Mozilla/5.0"}
-                url = 'https://finance.naver.com/sise/sise_index.naver?code=KOSPI'
-                res = requests.get(url, headers=headers, timeout=5)
-                if res.status_code == 200:
-                    soup = BeautifulSoup(res.content.decode('euc-kr', 'replace'), 'html.parser')
-                    
-                    # 1. Parse date from span id="time"
-                    time_span = soup.find('span', id='time')
-                    parsed_date = None
-                    if time_span:
-                        text = time_span.text.strip()
-                        match = re.search(r'(\d{4})\.(\d{2})\.(\d{2})', text)
-                        if match:
-                            parsed_date = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
-                    
-                    # 2. Parse rise/fall counts
-                    subtop = soup.find('div', class_='subtop_sise_detail')
-                    if subtop and parsed_date:
-                        tbl = subtop.find('table', class_='table_kos_index')
-                        if tbl:
-                            lst_sh = tbl.find('li', class_='lst')
-                            lst_ss = tbl.find('li', class_='lst2')
-                            lst_hr = tbl.find('li', class_='lst4')
-                            lst_hh = tbl.find('li', class_='lst5')
-                            
-                            sanghan = int(lst_sh.find('a').find('span').text.replace(',', '')) if lst_sh else 0
-                            sangseung = int(lst_ss.find('a').find('span').text.replace(',', '')) if lst_ss else 0
-                            harak = int(lst_hr.find('a').find('span').text.replace(',', '')) if lst_hr else 0
-                            hahan = int(lst_hh.find('a').find('span').text.replace(',', '')) if lst_hh else 0
-                            
-                            adv = sanghan + sangseung
-                            dec = harak + hahan
-                            
-                            if adv != 0 or dec != 0:
-                                history = []
-                                with open(adr_path, "r", encoding="utf-8") as f:
-                                    history = json.load(f)
-                                
-                                found = False
-                                for item in history:
-                                    if item['date'] == parsed_date:
-                                        item['adv'] = adv
-                                        item['dec'] = dec
-                                        found = True
-                                        break
-                                
-                                if not found:
-                                    history.append({'date': parsed_date, 'adv': adv, 'dec': dec})
-                                
-                                history.sort(key=lambda x: x['date'])
-                                history = history[-250:]
-                                with open(adr_path, "w", encoding="utf-8") as f:
-                                    json.dump(history, f, indent=4)
-            except Exception as adr_up_err:
-                print(f"Error updating ADR history in scraper: {adr_up_err}", file=sys.stderr)
-
-            # Backfill any missing recent business days via pykrx
-            try:
-                with open(adr_path, "r", encoding="utf-8") as f:
-                    history = json.load(f)
-                
-                existing_dates = {item['date'] for item in history}
-                today_dt = datetime.now()
-                needs_save = False
-                for i in range(1, 8):
-                    check_dt = today_dt - timedelta(days=i)
-                    if check_dt.weekday() < 5:
-                        d_str = check_dt.strftime("%Y-%m-%d")
-                        if d_str not in existing_dates:
-                            try:
-                                df_change = stock.get_market_price_change_by_ticker(d_str.replace('-', ''), d_str.replace('-', ''), market='KOSPI')
-                                if df_change is not None and not df_change.empty:
-                                    adv = len(df_change[df_change['등락률'] > 0])
-                                    dec = len(df_change[df_change['등락률'] < 0])
-                                    if adv > 0 or dec > 0:
-                                        history.append({'date': d_str, 'adv': adv, 'dec': dec})
-                                        existing_dates.add(d_str)
-                                        needs_save = True
-                            except Exception:
-                                pass
-                if needs_save:
-                    history.sort(key=lambda x: x['date'])
-                    history = history[-250:]
-                    with open(adr_path, "w", encoding="utf-8") as f:
-                        json.dump(history, f, indent=4)
-            except Exception as pykrx_adr_err:
-                print(f"Error backfilling ADR via pykrx: {pykrx_adr_err}", file=sys.stderr)
-
             with open(adr_path, "r", encoding="utf-8") as f:
                 adr_data = json.load(f)
             if adr_data and len(adr_data) >= 20:
@@ -594,10 +571,11 @@ def task_local_kofia_adr():
 def task_night_futures(futures_price_ref):
     result = {}
     try:
-        night_path = r"D:\AI Investing\Daily_Check\DailyData\kospif_ngt_history.json"
+        night_path = get_data_path("kospif_ngt_history.json")
         if os.path.exists(night_path):
             with open(night_path, "r", encoding="utf-8") as f:
                 night_data = json.load(f)
+
             if night_data and len(night_data) >= 2:
                 latest_night_from_file = round(float(night_data[-1]['price']), 2)
                 
@@ -731,6 +709,11 @@ def update_krx_cache():
                     krx_res.update(vkospi_data)
             except Exception as e:
                 print(f"Error in task_vkospi: {e}", file=sys.stderr)
+            time.sleep(0.3)
+            try:
+                sync_adr_history_pykrx()
+            except Exception as e:
+                print(f"Error in sync_adr_history_pykrx: {e}", file=sys.stderr)
             return krx_res
             
         future_krx = executor.submit(run_krx_tasks)
@@ -740,8 +723,6 @@ def update_krx_cache():
         except Exception as e:
             print(f"Error in future_preload: {e}", file=sys.stderr)
             
-        future_local = executor.submit(task_local_kofia_adr)
-        
         try:
             f_data = future_futures.result()
             if f_data:
@@ -757,11 +738,11 @@ def update_krx_cache():
             print(f"Error executing KRX tasks in thread: {e}", file=sys.stderr)
             
         try:
-            local_data = future_local.result()
+            local_data = task_local_kofia_adr()
             if local_data:
                 result.update(local_data)
         except Exception as e:
-            print(f"Error fetching local data in thread: {e}", file=sys.stderr)
+            print(f"Error fetching local data: {e}", file=sys.stderr)
 
     # 2. Run night futures afterwards (since it relies on futures price)
     try:
