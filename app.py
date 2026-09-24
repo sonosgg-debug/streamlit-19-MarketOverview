@@ -509,7 +509,7 @@ with st.sidebar:
         """
         <div style='padding: 2px 0 14px 0;'>
             <div style='font-size: 1.25rem; font-weight: 700; color: #f8fafc; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px;'>
-                <span>🏛️</span> 시장 선택
+                <span>🏛️</span> 시장/섹터 선택
             </div>
             <div style='font-size: 0.82rem; color: #94a3b8; margin-top: 4px;'>
                 조회할 글로벌 시장 또는 섹터를 선택하세요.
@@ -523,7 +523,7 @@ with st.sidebar:
     current_idx = SECTOR_OPTIONS.index(st.session_state.selected_sector) if st.session_state.selected_sector in SECTOR_OPTIONS else 0
 
     chosen_sector = st.radio(
-        "🏛️ 시장 선택",
+        "🏛️ 시장/섹터 선택",
         options=SECTOR_OPTIONS,
         index=current_idx,
         key="sector_radio_select",
