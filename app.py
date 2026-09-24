@@ -490,20 +490,26 @@ if st.session_state.pop("just_refreshed", False):
     st.toast("최신 시장 데이터로 갱신되었습니다.", icon="✅")
 
 # Session state for sector selection
-if "selected_sector" not in st.session_state:
-    st.session_state.selected_sector = "US Market"
-if "active_sector" not in st.session_state:
-    st.session_state.active_sector = "US Market"
+# Session state for sector selection
+SECTOR_OPTIONS = ["미국 시장 (US)", "한국 시장 (KRX)", "반도체 섹터 (Semi)"]
+legacy_sector_map = {
+    "US Market": "미국 시장 (US)",
+    "K Market": "한국 시장 (KRX)",
+    "Semiconductor": "반도체 섹터 (Semi)"
+}
+
+if "selected_sector" not in st.session_state or st.session_state.selected_sector in legacy_sector_map:
+    st.session_state.selected_sector = legacy_sector_map.get(st.session_state.get("selected_sector"), "미국 시장 (US)")
+if "active_sector" not in st.session_state or st.session_state.active_sector in legacy_sector_map:
+    st.session_state.active_sector = legacy_sector_map.get(st.session_state.get("active_sector"), "미국 시장 (US)")
 
 # Sidebar: Market and Sector Selection
-SECTOR_OPTIONS = ["US Market", "K Market", "Semiconductor"]
-
 with st.sidebar:
     st.markdown(
         """
         <div style='padding: 2px 0 14px 0;'>
             <div style='font-size: 1.25rem; font-weight: 700; color: #f8fafc; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px;'>
-                <span>⚙️</span> 시장 및 섹터 선택
+                <span>🏛️</span> 시장 선택
             </div>
             <div style='font-size: 0.82rem; color: #94a3b8; margin-top: 4px;'>
                 조회할 글로벌 시장 또는 섹터를 선택하세요.
@@ -517,7 +523,7 @@ with st.sidebar:
     current_idx = SECTOR_OPTIONS.index(st.session_state.selected_sector) if st.session_state.selected_sector in SECTOR_OPTIONS else 0
 
     chosen_sector = st.radio(
-        "시장 및 섹터 선택",
+        "🏛️ 시장 선택",
         options=SECTOR_OPTIONS,
         index=current_idx,
         key="sector_radio_select",
@@ -547,13 +553,13 @@ with st.sidebar:
 active_sector = st.session_state.active_sector
 
 market_note = ""
-if active_sector == "US Market":
+if "US" in active_sector or "미국" in active_sector or active_sector == "US Market":
     market_note = (
         '<div style="text-align: center; font-size: 12.5px; color: #94a3b8; margin-top: 4px;">'
         '* 미국 주식 정규장(22:30~05:00 KST) 개장 전에는 직전 영업일 공식 마감 종가가 표시됩니다. (선물·국채·유가·VIX는 실시간 반영)'
         '</div>'
     )
-elif active_sector == "Semiconductor":
+elif "Semi" in active_sector or "반도체" in active_sector or active_sector == "Semiconductor":
     market_note = (
         '<div style="text-align: center; font-size: 12.5px; color: #94a3b8; margin-top: 4px;">'
         '* 국내 반도체 종목은 당일 정규장 마감 가격이며, 미국 반도체 종목은 개장 전 직전 영업일 종가 기준입니다.'
@@ -604,9 +610,9 @@ def build_tab_cards(ticker_list):
 # Render cards according to active_sector
 active_sector = st.session_state.active_sector
 
-if active_sector == "US Market":
+if "US" in active_sector or "미국" in active_sector or active_sector == "US Market":
     target_tickers = US_MARKET_TICKERS
-elif active_sector == "K Market":
+elif "KRX" in active_sector or "한국" in active_sector or active_sector == "K Market":
     target_tickers = K_MARKET_TICKERS
 else:
     target_tickers = SEMI_MARKET_TICKERS
