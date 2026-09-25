@@ -10,3 +10,7 @@ env/
 .system_generated/
 *.metadata.json
 docs/.system_generated/
+
+# Streamlit secrets (config.toml은 다크 테마 적용을 위해 git에 포함)
+.streamlit/secrets.toml
+!.streamlit/config.toml
