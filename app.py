@@ -238,9 +238,9 @@ div.stButton > button:hover {
 }
 
 /* Sidebar Container */
-section[data-testid="stSidebar"] {
-    background-color: #0d1117 !important;
-    border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+section[data-testid="stSidebar"], [data-testid="stSidebar"] {
+    background-color: #1e293b !important;
+    border-right: 1px solid #334155 !important;
 }
 
 section[data-testid="stSidebar"] > div {
