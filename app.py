@@ -575,9 +575,9 @@ st.markdown(
     f'<h1 class="main-title" style="text-align: center; font-size: 2.0rem; font-weight: 800; margin: 0 0 6px 0; color: #8AB4F8 !important; -webkit-text-fill-color: #8AB4F8 !important; letter-spacing: -0.02em;">'
     f'Daily Market Overview'
     f'</h1>'
-    f'<div style="text-align: center; font-size: 16px; margin: 0; display: flex; align-items: center; justify-content: center; gap: 8px;">'
-    f'<span style="color: #f1f5f9; font-weight: 600; font-size: 16px;">{active_sector}</span>'
-    f'<span style="font-size: 16px; color: #cbd5e1; font-weight: 500;">(Updated: {fetch_time.strftime("%Y-%m-%d %H:%M:%S")} KST)</span>'
+    f'<div style="text-align: center; font-size: 0.95rem; margin: 0; display: flex; align-items: center; justify-content: center; gap: 8px;">'
+    f'<span style="color: #f1f5f9; font-weight: 600; font-size: 0.95rem;">{active_sector}</span>'
+    f'<span style="font-size: 0.95rem; color: #94a3b8; font-weight: 500;">(Updated: {fetch_time.strftime("%Y-%m-%d %H:%M:%S")} KST)</span>'
     f'</div>'
     f'{market_note}'
     f'</div>',
