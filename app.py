@@ -4,6 +4,10 @@ Ultra-lightweight, 100% Python-based implementation of MarketOverview
 Preserves the exact content layout and dark Glassmorphism visual design.
 """
 
+
+import socket
+socket.setdefaulttimeout(5.0)
+
 import streamlit as st
 from datetime import datetime, timezone, timedelta
 KST = timezone(timedelta(hours=9))

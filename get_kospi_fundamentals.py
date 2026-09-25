@@ -221,7 +221,7 @@ def fetch_kofia_liquidation(start_date, end_date):
 
 def task_kofia_preload():
     try:
-        today_k = datetime.now()
+        today_k = datetime.now(KST)
         start_date_k = (today_k - timedelta(days=15)).strftime("%Y%m%d")
         end_date_k = today_k.strftime("%Y%m%d")
         
@@ -433,7 +433,7 @@ def sync_adr_history_pykrx():
             history = []
             
     existing_dates = {item['date'] for item in history}
-    today_dt = datetime.now()
+    today_dt = datetime.now(KST)
     needs_save = False
     
     # Check today (if after 15:30 KST on weekday) and the last 10 days
@@ -673,7 +673,7 @@ def task_night_futures(futures_price_ref):
 
 def update_krx_cache():
     """Fetch all K-Market indicators and save to krx_cache.json in-process. Returns the result dict."""
-    today = datetime.now()
+    today = datetime.now(KST)
     start_date = (today - timedelta(days=365)).strftime("%Y%m%d")
     end_date = today.strftime("%Y%m%d")
     
@@ -757,7 +757,7 @@ def update_krx_cache():
     # Only update last_batch_update if fundamentals were successfully gathered
     if "per" in result and "pbr" in result:
         result["_meta"] = {
-            "last_batch_update": datetime.now().isoformat()
+            "last_batch_update": datetime.now(KST).isoformat()
         }
     
     # 4. Write results to krx_cache.json
