@@ -4,7 +4,8 @@ import json
 import time
 import socket
 socket.setdefaulttimeout(5.0)
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
+KST = timezone(timedelta(hours=9))
 import concurrent.futures
 import requests
 from bs4 import BeautifulSoup
