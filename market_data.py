@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 KST = timezone(timedelta(hours=9))
 import pandas as pd
 import yfinance as yf
+import FinanceDataReader as fdr
 from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 import pytz
@@ -398,6 +399,66 @@ def fetch_naver_price(ticker):
             }
     except Exception as e:
         print(f"Error fetching Naver price for {ticker}: {e}")
+
+    # 2순위 폴백: FinanceDataReader (네이버 API 장애 또는 누락 시 KRX 공식 시세로 무결성 보장)
+    return fetch_fdr_price(ticker)
+
+
+def fetch_fdr_price(ticker):
+    """
+    Fetch price data for Korean stocks and indices via FinanceDataReader as a high-reliability fallback.
+    Guarantees no phantom splits or pricing distortion.
+    """
+    try:
+        if ticker == "^KS11":
+            fdr_code = "KS11"
+        elif ticker == "^KQ11":
+            fdr_code = "KQ11"
+        elif ticker.endswith(".KS") or ticker.endswith(".KQ"):
+            fdr_code = ticker.replace(".KS", "").replace(".KQ", "")
+        else:
+            return None
+
+        # 최근 1년 (약 250영업일) 데이터 수집
+        start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        df = fdr.DataReader(fdr_code, start_date)
+        if df is not None and not df.empty and len(df) >= 2:
+            latest = df.iloc[-1]
+            prev = df.iloc[-2]
+
+            price = float(latest["Close"])
+            prev_close = float(prev["Close"])
+            open_val = float(latest["Open"]) if "Open" in latest and is_valid_num(latest["Open"]) else price
+            high_val = float(latest["High"]) if "High" in latest and is_valid_num(latest["High"]) else price
+            low_val = float(latest["Low"]) if "Low" in latest and is_valid_num(latest["Low"]) else price
+
+            change_amt = round(price - prev_close, 2)
+            change_pct = round((change_amt / prev_close) * 100, 2) if prev_close != 0 else 0.0
+
+            history = [
+                {"date": idx.strftime("%Y-%m-%d"), "value": round(float(row["Close"]), 2)}
+                for idx, row in df.iterrows()
+                if is_valid_num(row.get("Close"))
+            ][-200:]
+
+            meta = INDICATORS_META.get(ticker, {})
+            return {
+                "ticker": ticker,
+                "name": meta.get("name", ticker),
+                "price": price,
+                "change_amt": change_amt,
+                "change_percent": change_pct,
+                "open": open_val,
+                "high": high_val,
+                "low": low_val,
+                "close": price,
+                "history": history,
+                "negative_favorable": meta.get("negative_favorable", False),
+                "is_integer_only": ticker in INTEGER_ONLY_TICKERS,
+                "is_percent": False
+            }
+    except Exception as e:
+        print(f"Error fetching FDR price for {ticker}: {e}")
     return None
 
 def compute_kospi_rsi(ks11_item):
@@ -987,8 +1048,13 @@ def fetch_all_market_data(force_refresh=False, wait_for_krx=False):
         all_data["KOSPI200_NIGHT"] = night_item
 
     # 4. Determine remaining tickers to query from Yahoo Finance
+    # 한국 종목 및 지수는 yfinance 왜곡(팬텀 스플릿, 호가 딜레이) 방지를 위해 Yahoo Finance 조회에서 영구 배제
+    korean_excluded = {
+        "005930.KS", "009150.KS", "402340.KS", "000660.KS",
+        "^KS11", "^KQ11", "KOSPI200_FUTURES"
+    }
     all_meta_tickers = list(INDICATORS_META.keys())
-    excluded = set(all_data.keys()) | {"FEAR_GREED"}
+    excluded = set(all_data.keys()) | {"FEAR_GREED"} | korean_excluded
     yahoo_tickers = [t for t in all_meta_tickers if t not in excluded]
 
     # Fetch Yahoo data in bulk

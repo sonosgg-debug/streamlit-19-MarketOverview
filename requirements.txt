@@ -5,3 +5,4 @@ pandas>=2.0.0
 beautifulsoup4>=4.12.0
 pykrx>=1.2.0
 python-dotenv>=1.0.0
+finance-datareader>=0.9.90
