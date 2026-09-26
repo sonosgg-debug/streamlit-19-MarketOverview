@@ -7,6 +7,8 @@ Accurately replicates the design of IndicatorCard.tsx:
 - Precise favorable condition color logic
 """
 
+import math
+
 def render_daily_candle_svg(o, h, l, c):
     """Generate inline SVG for mini daily candle."""
     if o is None or h is None or l is None or c is None:
@@ -149,8 +151,8 @@ def render_indicator_card(data, display_index):
     display_name = f"{display_index:02d}. {name}" if display_index is not None else name
     is_odd = (display_index % 2 != 0) if display_index is not None else True
 
-    # Value formatting
-    if price is not None:
+    # Value formatting with NaN protection
+    if price is not None and not (isinstance(price, float) and (math.isnan(price) or math.isinf(price))):
         if is_int:
             formatted_price = f"{int(round(price)):,}"
         elif is_percent:
@@ -160,9 +162,12 @@ def render_indicator_card(data, display_index):
     else:
         formatted_price = "N/A"
 
-    # Color determining for change
-    is_positive = change_amt is not None and change_amt > 0
-    is_negative = change_amt is not None and change_amt < 0
+    # Color determining for change with NaN protection
+    has_valid_chg = change_amt is not None and not (isinstance(change_amt, float) and (math.isnan(change_amt) or math.isinf(change_amt)))
+    has_valid_pct = change_pct is not None and not (isinstance(change_pct, float) and (math.isnan(change_pct) or math.isinf(change_pct)))
+
+    is_positive = has_valid_chg and change_amt > 0
+    is_negative = has_valid_chg and change_amt < 0
 
     if is_positive:
         sign = "+"
@@ -183,13 +188,13 @@ def render_indicator_card(data, display_index):
         arrow_svg = ""
         val_color = "#a1a1aa"
 
-    if change_amt is not None:
+    if has_valid_chg:
         abs_amt = abs(change_amt)
         formatted_chg = f"{int(round(abs_amt)):,}" if is_int else f"{abs_amt:,.2f}"
     else:
         formatted_chg = "-"
 
-    if change_pct is not None:
+    if has_valid_pct:
         formatted_pct = f"{abs(change_pct):.2f}%"
         percent_str = f" ({sign}{formatted_pct})"
     else:

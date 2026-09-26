@@ -19,6 +19,7 @@ import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 import pytz
+import math
 from config import INDICATORS_META, INTEGER_ONLY_TICKERS, KRX_HOLIDAYS
 
 _krx_update_lock = threading.Lock()
@@ -729,6 +730,15 @@ def fetch_kospi200_night_direct(existing_item=None, futures_item=None):
 
     return existing_item
 
+def is_valid_num(val):
+    if val is None:
+        return False
+    try:
+        f = float(val)
+        return not (math.isnan(f) or math.isinf(f))
+    except (ValueError, TypeError):
+        return False
+
 def fetch_yahoo_bulk(tickers):
     """
     Fetch real-time quotes and daily OHLCV history for multiple tickers via yfinance.
@@ -749,22 +759,36 @@ def fetch_yahoo_bulk(tickers):
             
             # Prioritize official regularMarketPrice from meta, then fast_info lastPrice
             lp = meta.get("regularMarketPrice")
-            if lp is None:
+            if not is_valid_num(lp):
                 lp = fi.get("lastPrice")
+            if not is_valid_num(lp):
+                lp = None
 
-            # Official Previous Close: DO NOT use fi.get("previousClose") which is chartPreviousClose / adjusted.
-            # Use meta.get("previousClose") or regularMarketPreviousClose
+            # Official Previous Close:
+            # 1. meta previousClose
+            # 2. fast_info regularMarketPreviousClose (for equities/ETFs/indices)
+            # 3. fast_info previousClose (for crypto, forex, commodities where regularMarketPreviousClose is NaN)
             pc = meta.get("previousClose")
-            if pc is None:
+            if not is_valid_num(pc):
                 pc = fi.get("regularMarketPreviousClose")
-            if pc is None:
+            if not is_valid_num(pc):
                 pc = fi.get("previousClose")
+            if not is_valid_num(pc):
+                pc = None
 
             ypct = meta.get("regularMarketChangePercent")
+            if not is_valid_num(ypct):
+                ypct = None
 
             op = fi.get("open")
+            if not is_valid_num(op):
+                op = None
             hi = meta.get("regularMarketDayHigh") or fi.get("dayHigh")
+            if not is_valid_num(hi):
+                hi = None
             lo = meta.get("regularMarketDayLow") or fi.get("dayLow")
+            if not is_valid_num(lo):
+                lo = None
             tz_name = fi.timezone or meta.get("exchangeTimezoneName") or "America/New_York"
 
             rmt = meta.get("regularMarketTime")
@@ -815,6 +839,7 @@ def fetch_yahoo_bulk(tickers):
                 history = [
                     {"date": idx.strftime("%Y-%m-%d"), "value": round(float(row["Close"]), 4)}
                     for idx, row in tdf.iterrows()
+                    if is_valid_num(row.get("Close"))
                 ]
 
             price = None
@@ -826,54 +851,65 @@ def fetch_yahoo_bulk(tickers):
             last_hist_date = history[-1]["date"] if history else None
 
             # Integrate live session info if available
-            if live and live.get("price") is not None:
+            if live and is_valid_num(live.get("price")):
                 live_price = float(live["price"])
                 live_date = live.get("trade_date")
-                live_prev = float(live["prev_close"]) if live.get("prev_close") is not None else None
+                live_prev = float(live["prev_close"]) if is_valid_num(live.get("prev_close")) else None
+
+                hist_fallback_prev = None
+                if len(history) >= 2 and is_valid_num(history[-2].get("value")):
+                    hist_fallback_prev = float(history[-2]["value"])
+                elif history and is_valid_num(history[-1].get("value")):
+                    hist_fallback_prev = float(history[-1]["value"])
 
                 if live_date and last_hist_date and live_date > last_hist_date:
                     # New trading session not yet populated in daily Close candle table
                     history.append({"date": live_date, "value": round(live_price, 4)})
                     price = live_price
-                    prev_close = live_prev if live_prev is not None else (history[-2]["value"] if len(history) >= 2 else live_price)
-                    open_val = float(live["open"]) if live.get("open") is not None else live_price
-                    high_val = float(live["high"]) if live.get("high") is not None else max(live_price, open_val)
-                    low_val = float(live["low"]) if live.get("low") is not None else min(live_price, open_val)
+                    prev_close = live_prev if live_prev is not None else hist_fallback_prev
+                    open_val = float(live["open"]) if is_valid_num(live.get("open")) else live_price
+                    high_val = float(live["high"]) if is_valid_num(live.get("high")) else max(live_price, open_val)
+                    low_val = float(live["low"]) if is_valid_num(live.get("low")) else min(live_price, open_val)
                 elif live_date and last_hist_date and live_date == last_hist_date:
                     # Same date: update the latest value to reflect real-time / finalized quote
                     history[-1]["value"] = round(live_price, 4)
                     price = live_price
-                    prev_close = live_prev if live_prev is not None else (history[-2]["value"] if len(history) >= 2 else live_price)
-                    open_val = float(live["open"]) if live.get("open") is not None else (tdf.iloc[-1].get("Open", price) if not tdf.empty and not pd.isna(tdf.iloc[-1].get("Open", price)) else price)
-                    high_val = float(live["high"]) if live.get("high") is not None else (tdf.iloc[-1].get("High", price) if not tdf.empty and not pd.isna(tdf.iloc[-1].get("High", price)) else price)
-                    low_val = float(live["low"]) if live.get("low") is not None else (tdf.iloc[-1].get("Low", price) if not tdf.empty and not pd.isna(tdf.iloc[-1].get("Low", price)) else price)
+                    prev_close = live_prev if live_prev is not None else hist_fallback_prev
+                    open_val = float(live["open"]) if is_valid_num(live.get("open")) else (tdf.iloc[-1].get("Open", price) if not tdf.empty and is_valid_num(tdf.iloc[-1].get("Open")) else price)
+                    high_val = float(live["high"]) if is_valid_num(live.get("high")) else (tdf.iloc[-1].get("High", price) if not tdf.empty and is_valid_num(tdf.iloc[-1].get("High")) else price)
+                    low_val = float(live["low"]) if is_valid_num(live.get("low")) else (tdf.iloc[-1].get("Low", price) if not tdf.empty and is_valid_num(tdf.iloc[-1].get("Low")) else price)
                 else:
                     price = live_price
-                    prev_close = live_prev if live_prev is not None else (history[-2]["value"] if len(history) >= 2 else live_price)
-                    open_val = float(live["open"]) if live.get("open") is not None else price
-                    high_val = float(live["high"]) if live.get("high") is not None else price
-                    low_val = float(live["low"]) if live.get("low") is not None else price
+                    prev_close = live_prev if live_prev is not None else hist_fallback_prev
+                    open_val = float(live["open"]) if is_valid_num(live.get("open")) else price
+                    high_val = float(live["high"]) if is_valid_num(live.get("high")) else price
+                    low_val = float(live["low"]) if is_valid_num(live.get("low")) else price
                     if not history:
                         history = [{"date": live_date or datetime.now().strftime("%Y-%m-%d"), "value": round(live_price, 4)}]
 
             # Fallback to historical daily candle if live price is not available
-            if price is None and len(tdf) >= 2:
+            if (not is_valid_num(price)) and len(tdf) >= 2:
                 latest_row = tdf.iloc[-1]
                 prev_row = tdf.iloc[-2]
-                price = float(latest_row["Close"])
-                prev_close = float(prev_row["Close"])
-                open_val = float(latest_row["Open"]) if "Open" in latest_row and not pd.isna(latest_row["Open"]) else price
-                high_val = float(latest_row["High"]) if "High" in latest_row and not pd.isna(latest_row["High"]) else price
-                low_val = float(latest_row["Low"]) if "Low" in latest_row and not pd.isna(latest_row["Low"]) else price
+                if is_valid_num(latest_row["Close"]):
+                    price = float(latest_row["Close"])
+                    prev_close = float(prev_row["Close"]) if is_valid_num(prev_row["Close"]) else None
+                    open_val = float(latest_row["Open"]) if "Open" in latest_row and is_valid_num(latest_row["Open"]) else price
+                    high_val = float(latest_row["High"]) if "High" in latest_row and is_valid_num(latest_row["High"]) else price
+                    low_val = float(latest_row["Low"]) if "Low" in latest_row and is_valid_num(latest_row["Low"]) else price
 
-            if price is None:
+            if not is_valid_num(price):
                 continue
 
-            change_amt = round(price - prev_close, 2) if prev_close is not None else 0.0
-            if live and live.get("yahoo_pct") is not None:
-                change_pct = round(float(live["yahoo_pct"]), 2)
+            if is_valid_num(prev_close) and prev_close != 0:
+                change_amt = round(price - prev_close, 2)
+                if live and is_valid_num(live.get("yahoo_pct")):
+                    change_pct = round(float(live["yahoo_pct"]), 2)
+                else:
+                    change_pct = round((change_amt / prev_close) * 100, 2)
             else:
-                change_pct = round((change_amt / prev_close) * 100, 2) if prev_close else 0.0
+                change_amt = 0.0
+                change_pct = 0.0
 
             meta = INDICATORS_META.get(ticker, {})
             results[ticker] = {
