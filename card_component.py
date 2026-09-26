@@ -41,13 +41,16 @@ def render_daily_candle_svg(o, h, l, c):
 
 
 def render_sparkline_svg(history, is_odd=True, is_int=False, is_percent=False):
-    """Generate inline SVG sparkline with 50% opacity interactive hover tooltip (200-day trend)."""
+    """Generate inline SVG sparkline with 50% opacity interactive hover tooltip (60-day trend)."""
     if not history or len(history) < 2:
         return '<div style="width:165px; height:44px; display:flex; align-items:center; justify-content:flex-end; font-size:11px; color:#71717a;">No data</div>'
 
     valid_items = [h for h in history if h.get("value") is not None]
     if len(valid_items) < 2:
         return '<div style="width:165px; height:44px; display:flex; align-items:center; justify-content:flex-end; font-size:11px; color:#71717a;">No data</div>'
+
+    # Display the most recent 60 trading days for the 60-day trendline
+    valid_items = valid_items[-60:]
 
     values = [float(h["value"]) for h in valid_items]
     min_val = min(values)
@@ -81,13 +84,13 @@ def render_sparkline_svg(history, is_odd=True, is_int=False, is_percent=False):
         else:
             fmt_v = f"{v:,.2f}"
 
-        # Hit zone width
+        # Hit zone width: generous hit zones for endpoints so latest day is effortlessly hoverable
         if i == 0:
             x_start = 0.0
-            x_w = step_x / 2.0
+            x_w = max(step_x / 2.0, 10.0)
         elif i == len(values) - 1:
             x_start = x - (step_x / 2.0)
-            x_w = (step_x / 2.0) + 1.0
+            x_w = max(step_x / 2.0 + 35.0, 40.0)
         else:
             x_start = x - (step_x / 2.0)
             x_w = step_x
@@ -108,7 +111,7 @@ def render_sparkline_svg(history, is_odd=True, is_int=False, is_percent=False):
             f'<line class="sp-cross" x1="{x:.1f}" y1="0" x2="{x:.1f}" y2="{height}" stroke="rgba(255,255,255,0.25)" stroke-width="1" stroke-dasharray="2,2" />'
             f'<circle class="sp-dot" cx="{x:.1f}" cy="{y:.1f}" r="2.6" fill="{stroke_color}" stroke="#ffffff" stroke-width="1.2" />'
             f'<g class="sp-tip">'
-            f'<rect x="{tx:.1f}" y="{ty:.1f}" width="{tip_w}" height="{tip_h}" rx="4" fill="#0f172a" fill-opacity="0.5" stroke="#38bdf8" stroke-opacity="0.55" stroke-width="1" />'
+            f'<rect x="{tx:.1f}" y="{ty:.1f}" width="{tip_w}" height="{tip_h}" rx="4" fill="#0f172a" fill-opacity="0.8" stroke="#38bdf8" stroke-opacity="0.8" stroke-width="1" />'
             f'<text x="{tx + tip_w/2.0:.1f}" y="{ty + 11.0:.1f}" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-family="-apple-system, sans-serif">{raw_date}</text>'
             f'<text x="{tx + tip_w/2.0:.1f}" y="{ty + 24.0:.1f}" font-size="10.5" font-weight="700" fill="#ffffff" text-anchor="middle" font-family="-apple-system, sans-serif">{fmt_v}</text>'
             f'</g>'

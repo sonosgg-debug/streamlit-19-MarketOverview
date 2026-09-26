@@ -744,15 +744,29 @@ def fetch_yahoo_bulk(tickers):
     def fetch_live_info(sym):
         try:
             t = yf.Ticker(sym)
-            fi = t.fast_info
-            lp = fi.get("lastPrice")
-            pc = fi.get("previousClose")
-            op = fi.get("open")
-            hi = fi.get("dayHigh")
-            lo = fi.get("dayLow")
-            tz_name = fi.timezone or "America/New_York"
-
             meta = t.get_history_metadata() or {}
+            fi = t.fast_info
+            
+            # Prioritize official regularMarketPrice from meta, then fast_info lastPrice
+            lp = meta.get("regularMarketPrice")
+            if lp is None:
+                lp = fi.get("lastPrice")
+
+            # Official Previous Close: DO NOT use fi.get("previousClose") which is chartPreviousClose / adjusted.
+            # Use meta.get("previousClose") or regularMarketPreviousClose
+            pc = meta.get("previousClose")
+            if pc is None:
+                pc = fi.get("regularMarketPreviousClose")
+            if pc is None:
+                pc = fi.get("previousClose")
+
+            ypct = meta.get("regularMarketChangePercent")
+
+            op = fi.get("open")
+            hi = meta.get("regularMarketDayHigh") or fi.get("dayHigh")
+            lo = meta.get("regularMarketDayLow") or fi.get("dayLow")
+            tz_name = fi.timezone or meta.get("exchangeTimezoneName") or "America/New_York"
+
             rmt = meta.get("regularMarketTime")
             t_date = None
             if rmt:
@@ -763,6 +777,7 @@ def fetch_yahoo_bulk(tickers):
             return sym, {
                 "price": lp,
                 "prev_close": pc,
+                "yahoo_pct": ypct,
                 "open": op,
                 "high": hi,
                 "low": lo,
@@ -854,8 +869,11 @@ def fetch_yahoo_bulk(tickers):
             if price is None:
                 continue
 
-            change_amt = price - prev_close if prev_close is not None else 0.0
-            change_pct = (change_amt / prev_close) * 100 if prev_close else 0.0
+            change_amt = round(price - prev_close, 2) if prev_close is not None else 0.0
+            if live and live.get("yahoo_pct") is not None:
+                change_pct = round(float(live["yahoo_pct"]), 2)
+            else:
+                change_pct = round((change_amt / prev_close) * 100, 2) if prev_close else 0.0
 
             meta = INDICATORS_META.get(ticker, {})
             results[ticker] = {
