@@ -13,6 +13,7 @@ import pandas as pd
 import re
 from dotenv import load_dotenv
 import ssl
+from config import KRX_HOLIDAYS
 
 # Workaround for SSLEOFError on KRX server (fixes legacy TLS negotiation with Python 3.10+ / OpenSSL 3.0+)
 try:
@@ -440,10 +441,11 @@ def sync_adr_history_pykrx():
     # Check today (if after 15:30 KST on weekday) and the last 10 days
     check_days = []
     if today_dt.weekday() < 5 and (today_dt.hour > 15 or (today_dt.hour == 15 and today_dt.minute >= 30)):
-        check_days.append(today_dt)
+        if today_dt.strftime("%Y%m%d") not in KRX_HOLIDAYS:
+            check_days.append(today_dt)
     for i in range(1, 10):
         d = today_dt - timedelta(days=i)
-        if d.weekday() < 5:
+        if d.weekday() < 5 and d.strftime("%Y%m%d") not in KRX_HOLIDAYS:
             check_days.append(d)
             
     check_days.sort()

@@ -18,7 +18,8 @@ import pandas as pd
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
-from config import INDICATORS_META, INTEGER_ONLY_TICKERS
+import pytz
+from config import INDICATORS_META, INTEGER_ONLY_TICKERS, KRX_HOLIDAYS
 
 _krx_update_lock = threading.Lock()
 _krx_updating = False
@@ -43,26 +44,6 @@ def load_krx_auth():
                 pass
 
 load_krx_auth()
-
-# 한국거래소(KRX) 정규 휴장일 및 법정 공휴일 (2024~2027)
-KRX_HOLIDAYS = {
-    # 2024
-    '20240101', '20240209', '20240212', '20240301', '20240410', '20240501', '20240506',
-    '20240515', '20240606', '20240815', '20240916', '20240917', '20240918', '20241001',
-    '20241003', '20241009', '20241225', '20241231',
-    # 2025
-    '20250101', '20250128', '20250129', '20250130', '20250303', '20250501', '20250505',
-    '20250506', '20250606', '20250815', '20251003', '20251006', '20251007', '20251008',
-    '20251009', '20251225', '20251231',
-    # 2026
-    '20260101', '20260216', '20260217', '20260218', '20260302', '20260501', '20260505',
-    '20260525', '20260603', '20260606', '20260817', '20260924', '20260925', '20261005',
-    '20261009', '20261225', '20261231',
-    # 2027
-    '20270101', '20270208', '20270209', '20270210', '20270301', '20270503', '20270505',
-    '20270513', '20270607', '20270816', '20270914', '20270915', '20270916', '20271004',
-    '20271011', '20271225', '20271231'
-}
 
 _CACHED_TRADING_DAYS = None
 
@@ -749,68 +730,151 @@ def fetch_kospi200_night_direct(existing_item=None, futures_item=None):
     return existing_item
 
 def fetch_yahoo_bulk(tickers):
-    """Fetch daily OHLCV and history for multiple tickers via yfinance (up to 200 trading days)."""
+    """
+    Fetch real-time quotes and daily OHLCV history for multiple tickers via yfinance.
+    Uses ThreadPoolExecutor to fetch real-time fast_info and history_metadata in parallel,
+    ensuring that the latest trading session (e.g. Friday close or live session) is never
+    dropped even if Yahoo Finance's daily candle table has null/NaN in Close.
+    """
     results = {}
     if not tickers:
         return results
 
+    # 1. Fetch live quotes and session metadata in parallel (fast, ~2 seconds for 30 tickers)
+    def fetch_live_info(sym):
+        try:
+            t = yf.Ticker(sym)
+            fi = t.fast_info
+            lp = fi.get("lastPrice")
+            pc = fi.get("previousClose")
+            op = fi.get("open")
+            hi = fi.get("dayHigh")
+            lo = fi.get("dayLow")
+            tz_name = fi.timezone or "America/New_York"
+
+            meta = t.get_history_metadata() or {}
+            rmt = meta.get("regularMarketTime")
+            t_date = None
+            if rmt:
+                try:
+                    t_date = datetime.fromtimestamp(rmt, pytz.timezone(tz_name)).strftime("%Y-%m-%d")
+                except Exception:
+                    pass
+            return sym, {
+                "price": lp,
+                "prev_close": pc,
+                "open": op,
+                "high": hi,
+                "low": lo,
+                "trade_date": t_date
+            }
+        except Exception:
+            return sym, None
+
+    max_workers = min(16, len(tickers))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        live_infos = dict(ex.map(fetch_live_info, tickers))
+
+    # 2. Bulk download 1-year historical daily candles
     try:
         df = yf.download(tickers, period="1y", interval="1d", group_by="ticker", progress=False, threads=True)
-        if df.empty:
-            return results
+    except Exception as e:
+        print(f"Error in yf.download: {e}")
+        df = pd.DataFrame()
 
-        is_multi = isinstance(df.columns, pd.MultiIndex)
+    is_multi = isinstance(df.columns, pd.MultiIndex)
 
-        for ticker in tickers:
-            try:
+    for ticker in tickers:
+        try:
+            live = live_infos.get(ticker)
+            tdf = pd.DataFrame()
+            if not df.empty:
                 if is_multi:
-                    if ticker not in df.columns.levels[0]:
-                        continue
-                    tdf = df[ticker].dropna(subset=["Close"])
+                    if ticker in df.columns.levels[0]:
+                        tdf = df[ticker].dropna(subset=["Close"])
                 else:
                     tdf = df.dropna(subset=["Close"])
 
-                if len(tdf) < 2:
-                    continue
-
-                latest_row = tdf.iloc[-1]
-                prev_row = tdf.iloc[-2]
-
-                price = float(latest_row["Close"])
-                prev_close = float(prev_row["Close"])
-                change_amt = price - prev_close
-                change_pct = (change_amt / prev_close) * 100 if prev_close else 0.0
-
-                open_val = float(latest_row["Open"]) if "Open" in latest_row and not pd.isna(latest_row["Open"]) else price
-                high_val = float(latest_row["High"]) if "High" in latest_row and not pd.isna(latest_row["High"]) else price
-                low_val = float(latest_row["Low"]) if "Low" in latest_row and not pd.isna(latest_row["Low"]) else price
-                close_val = price
-
+            history = []
+            if not tdf.empty:
                 history = [
                     {"date": idx.strftime("%Y-%m-%d"), "value": round(float(row["Close"]), 4)}
                     for idx, row in tdf.iterrows()
-                ][-200:]
+                ]
 
-                meta = INDICATORS_META.get(ticker, {})
-                results[ticker] = {
-                    "ticker": ticker,
-                    "name": meta.get("name", ticker),
-                    "price": price,
-                    "change_amt": change_amt,
-                    "change_percent": change_pct,
-                    "open": open_val,
-                    "high": high_val,
-                    "low": low_val,
-                    "close": close_val,
-                    "history": history,
-                    "negative_favorable": meta.get("negative_favorable", False),
-                    "is_integer_only": ticker in INTEGER_ONLY_TICKERS,
-                    "is_percent": meta.get("is_percent", False)
-                }
-            except Exception as item_err:
-                print(f"Error parsing Yahoo data for {ticker}: {item_err}")
-    except Exception as e:
-        print(f"Error in fetch_yahoo_bulk: {e}")
+            price = None
+            prev_close = None
+            open_val = None
+            high_val = None
+            low_val = None
+
+            last_hist_date = history[-1]["date"] if history else None
+
+            # Integrate live session info if available
+            if live and live.get("price") is not None:
+                live_price = float(live["price"])
+                live_date = live.get("trade_date")
+                live_prev = float(live["prev_close"]) if live.get("prev_close") is not None else None
+
+                if live_date and last_hist_date and live_date > last_hist_date:
+                    # New trading session not yet populated in daily Close candle table
+                    history.append({"date": live_date, "value": round(live_price, 4)})
+                    price = live_price
+                    prev_close = live_prev if live_prev is not None else (history[-2]["value"] if len(history) >= 2 else live_price)
+                    open_val = float(live["open"]) if live.get("open") is not None else live_price
+                    high_val = float(live["high"]) if live.get("high") is not None else max(live_price, open_val)
+                    low_val = float(live["low"]) if live.get("low") is not None else min(live_price, open_val)
+                elif live_date and last_hist_date and live_date == last_hist_date:
+                    # Same date: update the latest value to reflect real-time / finalized quote
+                    history[-1]["value"] = round(live_price, 4)
+                    price = live_price
+                    prev_close = live_prev if live_prev is not None else (history[-2]["value"] if len(history) >= 2 else live_price)
+                    open_val = float(live["open"]) if live.get("open") is not None else (tdf.iloc[-1].get("Open", price) if not tdf.empty and not pd.isna(tdf.iloc[-1].get("Open", price)) else price)
+                    high_val = float(live["high"]) if live.get("high") is not None else (tdf.iloc[-1].get("High", price) if not tdf.empty and not pd.isna(tdf.iloc[-1].get("High", price)) else price)
+                    low_val = float(live["low"]) if live.get("low") is not None else (tdf.iloc[-1].get("Low", price) if not tdf.empty and not pd.isna(tdf.iloc[-1].get("Low", price)) else price)
+                else:
+                    price = live_price
+                    prev_close = live_prev if live_prev is not None else (history[-2]["value"] if len(history) >= 2 else live_price)
+                    open_val = float(live["open"]) if live.get("open") is not None else price
+                    high_val = float(live["high"]) if live.get("high") is not None else price
+                    low_val = float(live["low"]) if live.get("low") is not None else price
+                    if not history:
+                        history = [{"date": live_date or datetime.now().strftime("%Y-%m-%d"), "value": round(live_price, 4)}]
+
+            # Fallback to historical daily candle if live price is not available
+            if price is None and len(tdf) >= 2:
+                latest_row = tdf.iloc[-1]
+                prev_row = tdf.iloc[-2]
+                price = float(latest_row["Close"])
+                prev_close = float(prev_row["Close"])
+                open_val = float(latest_row["Open"]) if "Open" in latest_row and not pd.isna(latest_row["Open"]) else price
+                high_val = float(latest_row["High"]) if "High" in latest_row and not pd.isna(latest_row["High"]) else price
+                low_val = float(latest_row["Low"]) if "Low" in latest_row and not pd.isna(latest_row["Low"]) else price
+
+            if price is None:
+                continue
+
+            change_amt = price - prev_close if prev_close is not None else 0.0
+            change_pct = (change_amt / prev_close) * 100 if prev_close else 0.0
+
+            meta = INDICATORS_META.get(ticker, {})
+            results[ticker] = {
+                "ticker": ticker,
+                "name": meta.get("name", ticker),
+                "price": price,
+                "change_amt": change_amt,
+                "change_percent": change_pct,
+                "open": open_val,
+                "high": high_val,
+                "low": low_val,
+                "close": price,
+                "history": history[-200:],
+                "negative_favorable": meta.get("negative_favorable", False),
+                "is_integer_only": ticker in INTEGER_ONLY_TICKERS,
+                "is_percent": meta.get("is_percent", False)
+            }
+        except Exception as item_err:
+            print(f"Error parsing Yahoo data for {ticker}: {item_err}")
 
     return results
 
