@@ -111,7 +111,7 @@ section[data-testid="stSidebar"] h3 {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 95%;
+    max-width: calc(100% - 48px);
 }
 
 /* Card Body */
@@ -567,6 +567,12 @@ elif "Semi" in active_sector or "반도체" in active_sector or active_sector ==
     market_note = (
         '<div style="text-align: center; font-size: 12.5px; color: #94a3b8; margin-top: 4px;">'
         '* 국내 반도체 종목은 당일 정규장 마감 가격이며, 미국 반도체 종목은 개장 전 직전 영업일 종가 기준입니다.'
+        '</div>'
+    )
+elif "KRX" in active_sector or "한국" in active_sector or active_sector == "K Market":
+    market_note = (
+        '<div style="text-align: center; font-size: 12.5px; color: #94a3b8; margin-top: 4px;">'
+        '* 주가지수·선물은 실시간/당일 정규장 마감 기준이며, 고객예탁금·신용잔고·반대매매는 금융투자협회(KOFIA) 공식 결제 공시(T+2 집계) 기준입니다.'
         '</div>'
     )
 

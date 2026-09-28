@@ -166,9 +166,9 @@ def trigger_krx_background_update(wait=False):
 
                 worker_t = threading.Thread(target=_run, daemon=True)
                 worker_t.start()
-                worker_t.join(timeout=20.0)
+                worker_t.join(timeout=35.0)
                 if worker_t.is_alive():
-                    print("Warning: update_krx_cache timed out after 20.0s, proceeding with existing cache.")
+                    print("Warning: update_krx_cache timed out after 35.0s, proceeding with existing cache.")
             except Exception as e:
                 print(f"Error in synchronous update_krx_cache: {e}")
             finally:
@@ -266,10 +266,13 @@ def get_krx_cache_data(force_update=False, wait=False):
                 last_per_date = str(per_hist[-1].get("date", "")).split("T")[0]
                 if last_per_date < expected_trading_day:
                     should_update = True
+                    wait = True
             else:
                 should_update = True
+                wait = True
         except Exception:
             should_update = True
+            wait = True
 
     if should_update:
         trigger_krx_background_update(wait=wait)
@@ -497,8 +500,15 @@ def compute_kospi_rsi(ks11_item):
 
 def fetch_kospi_trade_value(existing_item=None):
     """Return KOSPI trading value from KRX cache or pykrx."""
+    expected_day = get_latest_expected_trading_day()
     if existing_item and existing_item.get("price") is not None:
-        return existing_item
+        hist = existing_item.get("history", [])
+        if hist:
+            last_d = str(hist[-1].get("date", "")).split("T")[0]
+            if last_d >= expected_day:
+                return existing_item
+        else:
+            return existing_item
 
     try:
         from pykrx import stock
@@ -538,8 +548,15 @@ def fetch_kospi_trade_value(existing_item=None):
 
 def fetch_vkospi_direct(existing_item=None):
     """Fetch live VKOSPI from KRX MDCSTAT01201 using PyKRX."""
+    expected_day = get_latest_expected_trading_day()
     if existing_item and existing_item.get("price") is not None:
-        return existing_item
+        hist = existing_item.get("history", [])
+        if hist:
+            last_d = str(hist[-1].get("date", "")).split("T")[0]
+            if last_d >= expected_day:
+                return existing_item
+        else:
+            return existing_item
 
     try:
         load_krx_auth()
