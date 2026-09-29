@@ -495,11 +495,12 @@ if st.session_state.pop("just_refreshed", False):
 
 # Session state for sector selection
 # Session state for sector selection
-SECTOR_OPTIONS = ["미국 시장 (US)", "한국 시장 (KRX)", "반도체 섹터 (Semi)"]
+SECTOR_OPTIONS = ["미국 시장 (US)", "한국 시장 (KRX)", "AI 반도체 섹터 (AI & Semi)"]
 legacy_sector_map = {
     "US Market": "미국 시장 (US)",
     "K Market": "한국 시장 (KRX)",
-    "Semiconductor": "반도체 섹터 (Semi)"
+    "Semiconductor": "AI 반도체 섹터 (AI & Semi)",
+    "반도체 섹터 (Semi)": "AI 반도체 섹터 (AI & Semi)"
 }
 
 if "selected_sector" not in st.session_state or st.session_state.selected_sector in legacy_sector_map:

@@ -16,7 +16,7 @@ K_MARKET_TICKERS = [
 ]
 
 SEMI_MARKET_TICKERS = [
-    '^SOX', 'NVDA', 'MU', 'SNDK', 'INTC', 'AMD', 'DRAM', 'CCML',
+    '^SOX', 'NVDA', 'MU', 'SNDK', 'INTC', 'AMD', 'PLTR', 'ORCL', 'AVGO', 'DRAM', 'CCML', 'AIQ', 'BAI',
     '005930.KS', '009150.KS', '402340.KS', '000660.KS', 'SKHY', '285A.T', '6981.T', '688825.SS'
 ]
 
@@ -77,15 +77,20 @@ INDICATORS_META = {
     'KOSPI200_NIGHT': {'name': 'KOSPI200 야간 선물 지수', 'negative_favorable': False},
     'VKOSPI': {'name': 'KOSPI200 변동성지수', 'negative_favorable': True},
 
-    # Semiconductor
+    # AI & Semiconductor
     '^SOX': {'name': '필라델피아 반도체 지수(SOX)', 'negative_favorable': False},
     'NVDA': {'name': '엔비디아(NVDA)', 'negative_favorable': False},
     'MU': {'name': '마이크론(MU)', 'negative_favorable': False},
     'SNDK': {'name': '샌디스크(SNDK)', 'negative_favorable': False},
     'INTC': {'name': '인텔(INTC)', 'negative_favorable': False},
     'AMD': {'name': 'AMD(AMD)', 'negative_favorable': False},
+    'PLTR': {'name': '팔란티어(PLTR)', 'negative_favorable': False},
+    'ORCL': {'name': '오라클(ORCL)', 'negative_favorable': False},
+    'AVGO': {'name': '브로드컴(AVGO)', 'negative_favorable': False},
     'DRAM': {'name': 'DRAM (Roundhill ETF)', 'negative_favorable': False},
     'CCML': {'name': 'CCML (Roundhill ETF)', 'negative_favorable': False},
+    'AIQ': {'name': 'AIQ (Global X ETF)', 'negative_favorable': False},
+    'BAI': {'name': 'BAI (BlackRock ETF)', 'negative_favorable': False},
     '005930.KS': {'name': '삼성전자', 'negative_favorable': False, 'integer_only': True},
     '009150.KS': {'name': '삼성전기', 'negative_favorable': False, 'integer_only': True},
     '402340.KS': {'name': 'SK스퀘어', 'negative_favorable': False, 'integer_only': True},
