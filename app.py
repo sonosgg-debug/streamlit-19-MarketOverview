@@ -567,7 +567,7 @@ if "US" in active_sector or "미국" in active_sector or active_sector == "US Ma
 elif "Semi" in active_sector or "반도체" in active_sector or active_sector == "Semiconductor":
     market_note = (
         '<div style="text-align: center; font-size: 12.5px; color: #94a3b8; margin-top: 4px;">'
-        '* 국내 반도체 종목은 당일 정규장 마감 가격이며, 미국 반도체 종목은 개장 전 직전 영업일 종가 기준입니다.'
+        '* 국내 종목은 당일 정규장 마감 가격이며, 미국 종목은 개장 전 직전 영업일 종가 기준입니다.'
         '</div>'
     )
 elif "KRX" in active_sector or "한국" in active_sector or active_sector == "K Market":
