@@ -499,7 +499,13 @@ def compute_kospi_rsi(ks11_item):
     }
 
 def fetch_kospi_trade_value(existing_item=None):
-    """Return KOSPI trading value from KRX cache or pykrx."""
+    """
+    Fetch KOSPI trading value (단위: 억원).
+    1순위: Daum 금융 API (초고속, 무인증, 200거래일 데이터 보장)
+    2순위: Naver Mobile API (실시간 integration 당일 거래대금)
+    3순위: pykrx / KRX MDC
+    4순위: existing_item 폴백
+    """
     expected_day = get_latest_expected_trading_day()
     if existing_item and existing_item.get("price") is not None:
         hist = existing_item.get("history", [])
@@ -507,28 +513,39 @@ def fetch_kospi_trade_value(existing_item=None):
             last_d = str(hist[-1].get("date", "")).split("T")[0]
             if last_d >= expected_day:
                 return existing_item
-        else:
-            return existing_item
 
+    # 1순위: Daum 금융 API
     try:
-        from pykrx import stock
-        load_krx_auth()
-        today = datetime.now(KST).strftime("%Y%m%d")
-        start = (datetime.now(KST) - timedelta(days=365)).strftime("%Y%m%d")
-        df_ohlcv = stock.get_index_ohlcv_by_date(start, today, "1001")
-        if df_ohlcv is not None and not df_ohlcv.empty:
-            df_val = df_ohlcv[df_ohlcv['거래대금'] > 0]
-            if len(df_val) >= 2:
-                df_val_200 = df_val.tail(200)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://finance.daum.net/"
+        }
+        url = "https://finance.daum.net/api/market_index/days?page=1&perPage=60&market=KOSPI"
+        res = requests.get(url, headers=headers, timeout=4)
+        if res.status_code == 200:
+            d_json = res.json()
+            items = d_json.get("data", [])
+            if items and len(items) >= 2:
+                sorted_items = sorted(items, key=lambda x: x["date"][:10])
                 history_val = [
-                    {"date": dt.strftime("%Y-%m-%d"), "value": round(float(row['거래대금'] / 100000000.0), 2)}
-                    for dt, row in df_val_200.iterrows()
+                    {"date": it["date"][:10], "value": round(float(it["accTradePrice"]) / 100.0, 1)}
+                    for it in sorted_items
+                    if is_valid_num(it.get("accTradePrice"))
                 ]
-                latest_val = round(float(df_val['거래대금'].iloc[-1] / 100000000.0), 2)
-                prev_val = round(float(df_val['거래대금'].iloc[-2] / 100000000.0), 2)
-                val_change = round(latest_val - prev_val, 2)
+                if existing_item and existing_item.get("history"):
+                    exist_map = {str(h["date"]).split("T")[0]: h["value"] for h in existing_item["history"]}
+                    for h in history_val:
+                        exist_map[h["date"]] = h["value"]
+                    merged_dates = sorted(exist_map.keys())
+                    final_history = [{"date": d, "value": exist_map[d]} for d in merged_dates][-200:]
+                else:
+                    final_history = history_val[-200:]
+
+                latest_val = final_history[-1]["value"]
+                prev_val = final_history[-2]["value"] if len(final_history) >= 2 else latest_val
+                val_change = round(latest_val - prev_val, 1)
                 val_pct = round((val_change / prev_val) * 100, 2) if prev_val != 0 else 0.0
-                
+
                 meta = INDICATORS_META.get("KOSPI_TRADE_VALUE", {})
                 return {
                     "ticker": "KOSPI_TRADE_VALUE",
@@ -537,17 +554,142 @@ def fetch_kospi_trade_value(existing_item=None):
                     "change_amt": val_change,
                     "change_percent": val_pct,
                     "open": None, "high": None, "low": None, "close": latest_val,
-                    "history": history_val,
+                    "history": final_history,
                     "negative_favorable": meta.get("negative_favorable", False),
                     "is_integer_only": True,
-                    "is_percent": False
+                    "is_percent": False,
+                    "trade_date": final_history[-1]["date"]
                 }
     except Exception as e:
-        print(f"Error fetching KOSPI trade value: {e}")
+        print(f"Error fetching KOSPI trade value from Daum: {e}")
+
+    # 2순위: Naver Mobile API (실시간 당일 거래대금)
+    try:
+        url_nav = "https://m.stock.naver.com/api/index/KOSPI/integration"
+        r_nav = requests.get(url_nav, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
+        if r_nav.status_code == 200:
+            nav_data = r_nav.json()
+            for tinfo in nav_data.get("totalInfos", []):
+                if tinfo.get("code") == "accumulatedTradingValue":
+                    raw_val_str = str(tinfo.get("value", "")).replace(",", "").replace("백만", "").strip()
+                    if raw_val_str and is_valid_num(raw_val_str):
+                        nav_val_eok = round(float(raw_val_str) / 100.0, 1)
+                        expected_d = get_latest_expected_trading_day()
+                        hist = list(existing_item.get("history", [])) if existing_item else []
+                        if hist:
+                            last_d = str(hist[-1].get("date", "")).split("T")[0]
+                            if expected_d > last_d:
+                                hist.append({"date": expected_d, "value": nav_val_eok})
+                            else:
+                                hist[-1]["value"] = nav_val_eok
+                        else:
+                            hist = [{"date": expected_d, "value": nav_val_eok}]
+
+                        prev_v = hist[-2]["value"] if len(hist) >= 2 else nav_val_eok
+                        chg_v = round(nav_val_eok - prev_v, 1)
+                        chg_pct = round((chg_v / prev_v) * 100, 2) if prev_v != 0 else 0.0
+
+                        meta = INDICATORS_META.get("KOSPI_TRADE_VALUE", {})
+                        return {
+                            "ticker": "KOSPI_TRADE_VALUE",
+                            "name": meta.get("name", "KOSPI 거래대금 (단위:억원)"),
+                            "price": nav_val_eok,
+                            "change_amt": chg_v,
+                            "change_percent": chg_pct,
+                            "open": None, "high": None, "low": None, "close": nav_val_eok,
+                            "history": hist[-200:],
+                            "negative_favorable": meta.get("negative_favorable", False),
+                            "is_integer_only": True,
+                            "is_percent": False,
+                            "trade_date": hist[-1]["date"]
+                        }
+    except Exception as e_nav:
+        print(f"Error fetching KOSPI trade value from Naver: {e_nav}")
+
     return existing_item
 
+def compute_kospi_adr(existing_item=None):
+    """
+    Compute 20-day KOSPI ADR (Advance Decline Ratio, %) dynamically.
+    Combines local data/adv_dec_history.json with real-time Naver integration API upDownStockInfo.
+    """
+    adr_path = os.path.join(os.path.dirname(__file__), "data", "adv_dec_history.json")
+    history_records = []
+    if os.path.exists(adr_path):
+        try:
+            with open(adr_path, "r", encoding="utf-8") as f:
+                history_records = json.load(f)
+        except Exception:
+            history_records = []
+
+    # Check live Naver upDownStockInfo
+    try:
+        url_nav = "https://m.stock.naver.com/api/index/KOSPI/integration"
+        r_nav = requests.get(url_nav, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
+        if r_nav.status_code == 200:
+            nav_data = r_nav.json()
+            up_down = nav_data.get("upDownStockInfo", {})
+            rise = int(up_down.get("riseCount", 0)) + int(up_down.get("upperCount", 0))
+            fall = int(up_down.get("fallCount", 0)) + int(up_down.get("lowerCount", 0))
+            if rise > 0 or fall > 0:
+                expected_d = get_latest_expected_trading_day()
+                dates_set = {x["date"] for x in history_records}
+                if expected_d not in dates_set:
+                    history_records.append({"date": expected_d, "adv": rise, "dec": fall})
+                    history_records.sort(key=lambda x: x["date"])
+                    try:
+                        with open(adr_path, "w", encoding="utf-8") as f_save:
+                            json.dump(history_records[-250:], f_save, indent=4)
+                    except Exception:
+                        pass
+                else:
+                    for rec in history_records:
+                        if rec["date"] == expected_d:
+                            rec["adv"] = rise
+                            rec["dec"] = fall
+                            break
+    except Exception as e:
+        print(f"Error fetching live ADR counts from Naver: {e}")
+
+    if not history_records or len(history_records) < 20:
+        return existing_item
+
+    adr_computed = []
+    for i in range(len(history_records)):
+        if i < 19:
+            continue
+        recent_20 = history_records[i-19 : i+1]
+        sum_adv = sum(item["adv"] for item in recent_20)
+        sum_dec = sum(item["dec"] for item in recent_20)
+        val = (sum_adv / sum_dec) * 100 if sum_dec != 0 else 0.0
+        adr_computed.append({"date": history_records[i]["date"], "value": round(val, 2)})
+
+    if len(adr_computed) < 2:
+        return existing_item
+
+    adr_history = adr_computed[-200:]
+    latest_adr = adr_history[-1]["value"]
+    prev_adr = adr_history[-2]["value"]
+    adr_change = round(latest_adr - prev_adr, 2)
+    adr_pct = round((adr_change / prev_adr) * 100, 2) if prev_adr != 0 else 0.0
+
+    meta = INDICATORS_META.get("ADR_INFO", {})
+    return {
+        "ticker": "ADR_INFO",
+        "name": meta.get("name", "KOSPI ADR(20, %)"),
+        "price": latest_adr,
+        "change_amt": adr_change,
+        "change_percent": adr_pct,
+        "open": None, "high": None, "low": None, "close": latest_adr,
+        "history": adr_history,
+        "negative_favorable": meta.get("negative_favorable", False),
+        "is_integer_only": False,
+        "is_percent": True,
+        "trade_date": adr_history[-1]["date"]
+    }
+
 def fetch_vkospi_direct(existing_item=None):
-    """Fetch live VKOSPI from KRX MDCSTAT01201 using PyKRX."""
+    """Fetch live VKOSPI from KRX MDCSTAT01201 using PyKRX with safe isolation."""
     expected_day = get_latest_expected_trading_day()
     if existing_item and existing_item.get("price") is not None:
         hist = existing_item.get("history", [])
@@ -605,7 +747,7 @@ def fetch_vkospi_direct(existing_item=None):
                     new_hist.append({"date": d_fmt, "value": round(float(str(row['CLSPRC_IDX']).replace(',', '')), 2)})
 
             if existing_item and existing_item.get("history"):
-                hist_map = {h["date"]: h["value"] for h in existing_item["history"]}
+                hist_map = {str(h["date"]).split("T")[0]: h["value"] for h in existing_item["history"]}
                 for nh in new_hist:
                     hist_map[nh["date"]] = nh["value"]
                 sorted_dates = sorted(hist_map.keys())
@@ -627,10 +769,10 @@ def fetch_vkospi_direct(existing_item=None):
                 "history": final_hist,
                 "negative_favorable": meta.get("negative_favorable", True),
                 "is_integer_only": False,
-                "is_percent": False
+                "is_percent": False,
+                "trade_date": final_hist[-1]["date"]
             }
 
-            # Update local krx_cache.json on disk if available
             try:
                 cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
                 if os.path.exists(cache_path):
@@ -654,8 +796,9 @@ def fetch_vkospi_direct(existing_item=None):
 
             return result_item
     except Exception as e:
-        print(f"Error fetching VKOSPI: {e}")
+        pass
     return existing_item
+
 
 def fetch_kospi200_night_direct(existing_item=None, futures_item=None):
     """
@@ -883,7 +1026,8 @@ def fetch_yahoo_bulk(tickers):
                 "open": op,
                 "high": hi,
                 "low": lo,
-                "trade_date": t_date
+                "trade_date": t_date,
+                "tz_name": tz_name
             }
         except Exception:
             return sym, None
@@ -905,11 +1049,17 @@ def fetch_yahoo_bulk(tickers):
         try:
             live = live_infos.get(ticker)
             tdf = pd.DataFrame()
+            candle_last_date = None
             if not df.empty:
                 if is_multi:
                     if ticker in df.columns.levels[0]:
-                        tdf = df[ticker].dropna(subset=["Close"])
+                        raw_tdf = df[ticker]
+                        if not raw_tdf.empty:
+                            candle_last_date = raw_tdf.index[-1].strftime("%Y-%m-%d")
+                        tdf = raw_tdf.dropna(subset=["Close"])
                 else:
+                    if not df.empty:
+                        candle_last_date = df.index[-1].strftime("%Y-%m-%d")
                     tdf = df.dropna(subset=["Close"])
 
             history = []
@@ -928,10 +1078,18 @@ def fetch_yahoo_bulk(tickers):
 
             last_hist_date = history[-1]["date"] if history else None
 
+            tz_name = (live.get("tz_name") if live else None) or ("Asia/Tokyo" if ticker.endswith(".T") else "America/New_York")
+            try:
+                today_exchange = datetime.now(pytz.timezone(tz_name)).strftime("%Y-%m-%d")
+            except Exception:
+                today_exchange = datetime.now().strftime("%Y-%m-%d")
+
+            live_date = live.get("trade_date") if live else None
+            effective_date = live_date or candle_last_date or today_exchange
+
             # Integrate live session info if available
             if live and is_valid_num(live.get("price")):
                 live_price = float(live["price"])
-                live_date = live.get("trade_date")
                 live_prev = float(live["prev_close"]) if is_valid_num(live.get("prev_close")) else None
 
                 hist_fallback_prev = None
@@ -940,30 +1098,21 @@ def fetch_yahoo_bulk(tickers):
                 elif history and is_valid_num(history[-1].get("value")):
                     hist_fallback_prev = float(history[-1]["value"])
 
-                if live_date and last_hist_date and live_date > last_hist_date:
-                    # New trading session not yet populated in daily Close candle table
-                    history.append({"date": live_date, "value": round(live_price, 4)})
-                    price = live_price
-                    prev_close = live_prev if live_prev is not None else hist_fallback_prev
-                    open_val = float(live["open"]) if is_valid_num(live.get("open")) else live_price
-                    high_val = float(live["high"]) if is_valid_num(live.get("high")) else max(live_price, open_val)
-                    low_val = float(live["low"]) if is_valid_num(live.get("low")) else min(live_price, open_val)
-                elif live_date and last_hist_date and live_date == last_hist_date:
-                    # Same date: update the latest value to reflect real-time / finalized quote
-                    history[-1]["value"] = round(live_price, 4)
-                    price = live_price
-                    prev_close = live_prev if live_prev is not None else hist_fallback_prev
-                    open_val = float(live["open"]) if is_valid_num(live.get("open")) else (tdf.iloc[-1].get("Open", price) if not tdf.empty and is_valid_num(tdf.iloc[-1].get("Open")) else price)
-                    high_val = float(live["high"]) if is_valid_num(live.get("high")) else (tdf.iloc[-1].get("High", price) if not tdf.empty and is_valid_num(tdf.iloc[-1].get("High")) else price)
-                    low_val = float(live["low"]) if is_valid_num(live.get("low")) else (tdf.iloc[-1].get("Low", price) if not tdf.empty and is_valid_num(tdf.iloc[-1].get("Low")) else price)
+                price = live_price
+                prev_close = live_prev if live_prev is not None else hist_fallback_prev
+                open_val = float(live["open"]) if is_valid_num(live.get("open")) else price
+                high_val = float(live["high"]) if is_valid_num(live.get("high")) else max(live_price, open_val)
+                low_val = float(live["low"]) if is_valid_num(live.get("low")) else min(live_price, open_val)
+
+                if history:
+                    if effective_date > last_hist_date:
+                        history.append({"date": effective_date, "value": round(live_price, 4)})
+                    elif effective_date == last_hist_date:
+                        history[-1]["value"] = round(live_price, 4)
+                    else:
+                        history[-1]["value"] = round(live_price, 4)
                 else:
-                    price = live_price
-                    prev_close = live_prev if live_prev is not None else hist_fallback_prev
-                    open_val = float(live["open"]) if is_valid_num(live.get("open")) else price
-                    high_val = float(live["high"]) if is_valid_num(live.get("high")) else price
-                    low_val = float(live["low"]) if is_valid_num(live.get("low")) else price
-                    if not history:
-                        history = [{"date": live_date or datetime.now().strftime("%Y-%m-%d"), "value": round(live_price, 4)}]
+                    history = [{"date": effective_date, "value": round(live_price, 4)}]
 
             # Fallback to historical daily candle if live price is not available
             if (not is_valid_num(price)) and len(tdf) >= 2:
@@ -989,6 +1138,8 @@ def fetch_yahoo_bulk(tickers):
                 change_amt = 0.0
                 change_pct = 0.0
 
+            final_trade_date = effective_date or (history[-1]["date"] if history else None)
+
             meta = INDICATORS_META.get(ticker, {})
             results[ticker] = {
                 "ticker": ticker,
@@ -1003,7 +1154,8 @@ def fetch_yahoo_bulk(tickers):
                 "history": history[-200:],
                 "negative_favorable": meta.get("negative_favorable", False),
                 "is_integer_only": ticker in INTEGER_ONLY_TICKERS,
-                "is_percent": meta.get("is_percent", False)
+                "is_percent": meta.get("is_percent", False),
+                "trade_date": final_trade_date
             }
         except Exception as item_err:
             print(f"Error parsing Yahoo data for {ticker}: {item_err}")
@@ -1051,12 +1203,17 @@ def fetch_all_market_data(force_refresh=False, wait_for_krx=False):
         if rsi_item:
             all_data["KOSPI_RSI"] = rsi_item
 
-    # 3c. Fetch KOSPI Trade Value dynamically from Naver Finance
+    # 3c. Fetch KOSPI Trade Value dynamically (Daum -> Naver -> KRX)
     tv_item = fetch_kospi_trade_value(all_data.get("KOSPI_TRADE_VALUE"))
     if tv_item:
         all_data["KOSPI_TRADE_VALUE"] = tv_item
 
-    # 3d. Fetch KOSPI200 Night Futures dynamically from eSignal API
+    # 3d. Compute KOSPI ADR dynamically from local history & Naver integration
+    adr_item = compute_kospi_adr(all_data.get("ADR_INFO"))
+    if adr_item:
+        all_data["ADR_INFO"] = adr_item
+
+    # 3e. Fetch KOSPI200 Night Futures dynamically from eSignal API
     night_item = fetch_kospi200_night_direct(
         existing_item=all_data.get("KOSPI200_NIGHT"),
         futures_item=all_data.get("KOSPI200_FUTURES")

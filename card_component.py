@@ -206,10 +206,14 @@ def render_indicator_card(data, display_index):
     sparkline_html = render_sparkline_svg(history, is_odd=is_odd, is_int=is_int, is_percent=is_percent)
 
     last_date_badge = ""
-    if history:
-        raw_d = str(history[-1].get("date", "")).split("T")[0]
-        if len(raw_d) == 10:
-            last_date_str = f"{raw_d[5:7]}/{raw_d[8:10]}"
+    target_d_str = data.get("trade_date")
+    if not target_d_str and history:
+        target_d_str = str(history[-1].get("date", "")).split("T")[0]
+
+    if target_d_str:
+        clean_d = str(target_d_str).split("T")[0]
+        if len(clean_d) == 10:
+            last_date_str = f"{clean_d[5:7]}/{clean_d[8:10]}"
             last_date_badge = f'<span class="card-date-badge" style="font-size: 11px; color: #94a3b8; font-weight: 500; background: rgba(255,255,255,0.06); padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.08); white-space: nowrap; margin-left: 8px;">{last_date_str}</span>'
 
     card_html = (

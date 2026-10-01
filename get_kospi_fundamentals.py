@@ -50,12 +50,13 @@ if not os.getenv("KRX_ID") or not os.getenv("KRX_PW"):
         except Exception:
             pass
 
+stock = None
+KrxWebIo = None
 try:
     from pykrx import stock
     from pykrx.website.krx.krxio import KrxWebIo
-except ImportError:
-    print(json.dumps({"error": "pykrx is not installed"}))
-    sys.exit(1)
+except Exception as pykrx_err:
+    print(f"Warning: pykrx failed to initialize (e.g. KRX server maintenance or auth issue): {pykrx_err}", file=sys.stderr)
 
 if "--batch" in sys.argv:
     # Silence stdout but keep stderr for error logging
@@ -275,6 +276,8 @@ def task_kofia_preload():
 
 def task_fundamentals(start_date, end_date):
     result = {}
+    if stock is None:
+        return result
     for attempt in range(2):
         try:
             df_fund = stock.get_index_fundamental(start_date, end_date, "1001")
@@ -323,6 +326,8 @@ class KrxMdc(KrxWebIo):
 
 def task_vkospi(start_date, end_date):
     result = {}
+    if KrxWebIo is None:
+        return result
     try:
         krx = KrxMdc()
         res = krx.read(
@@ -374,6 +379,8 @@ def task_vkospi(start_date, end_date):
 
 def task_ohlcv_pykrx(start_date, end_date):
     result = {}
+    if stock is None:
+        return result
     try:
         df_ohlcv = stock.get_index_ohlcv_by_date(start_date, end_date, "1001")
         if df_ohlcv is not None and not df_ohlcv.empty:
@@ -425,6 +432,8 @@ def task_ohlcv_pykrx(start_date, end_date):
 
 def sync_adr_history_pykrx():
     """Sync recent trading days' advance/decline counts to data/adv_dec_history.json via pykrx."""
+    if stock is None:
+        return []
     adr_path = get_data_path("adv_dec_history.json")
     history = []
     if os.path.exists(adr_path):
