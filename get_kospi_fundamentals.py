@@ -3,7 +3,7 @@ import sys
 import json
 import time
 import socket
-socket.setdefaulttimeout(5.0)
+socket.setdefaulttimeout(15.0)
 from datetime import datetime, timezone, timedelta
 KST = timezone(timedelta(hours=9))
 import concurrent.futures
@@ -280,7 +280,8 @@ def task_fundamentals(start_date, end_date):
         return result
     for attempt in range(2):
         try:
-            df_fund = stock.get_index_fundamental(start_date, end_date, "1001")
+            q_start = start_date if attempt == 0 else (datetime.now(KST) - timedelta(days=320)).strftime("%Y%m%d")
+            df_fund = stock.get_index_fundamental(q_start, end_date, "1001")
             if df_fund is not None and not df_fund.empty:
                 df_fund_filtered = df_fund[(df_fund['PER'] != 0) & (df_fund['PBR'] != 0)].copy()
                 if len(df_fund_filtered) >= 2:

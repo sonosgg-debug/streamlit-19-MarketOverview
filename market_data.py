@@ -10,7 +10,7 @@ import requests
 import subprocess
 import threading
 import socket
-socket.setdefaulttimeout(5.0)
+socket.setdefaulttimeout(15.0)
 from datetime import datetime, timedelta, timezone
 
 KST = timezone(timedelta(hours=9))
@@ -166,9 +166,9 @@ def trigger_krx_background_update(wait=False):
 
                 worker_t = threading.Thread(target=_run, daemon=True)
                 worker_t.start()
-                worker_t.join(timeout=35.0)
+                worker_t.join(timeout=45.0)
                 if worker_t.is_alive():
-                    print("Warning: update_krx_cache timed out after 35.0s, proceeding with existing cache.")
+                    print("Warning: update_krx_cache timed out after 45.0s, proceeding with existing cache.")
             except Exception as e:
                 print(f"Error in synchronous update_krx_cache: {e}")
             finally:
@@ -254,7 +254,10 @@ def get_krx_cache_data(force_update=False, wait=False):
             last_update_str = meta.get("last_batch_update")
             if last_update_str:
                 last_dt = datetime.fromisoformat(last_update_str)
-                if (datetime.now() - last_dt).total_seconds() > 14400:
+                now_kst = datetime.now(KST)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=KST)
+                if (now_kst - last_dt).total_seconds() > 14400:
                     should_update = True
             else:
                 should_update = True
@@ -547,7 +550,7 @@ def fetch_kospi_trade_value(existing_item=None):
                 val_pct = round((val_change / prev_val) * 100, 2) if prev_val != 0 else 0.0
 
                 meta = INDICATORS_META.get("KOSPI_TRADE_VALUE", {})
-                return {
+                res_item = {
                     "ticker": "KOSPI_TRADE_VALUE",
                     "name": meta.get("name", "KOSPI 거래대금 (단위:억원)"),
                     "price": latest_val,
@@ -560,6 +563,23 @@ def fetch_kospi_trade_value(existing_item=None):
                     "is_percent": False,
                     "trade_date": final_history[-1]["date"]
                 }
+                try:
+                    cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
+                    if os.path.exists(cache_path):
+                        with open(cache_path, "r", encoding="utf-8") as f:
+                            c_data = json.load(f)
+                        if isinstance(c_data, dict):
+                            c_data["kospi_trade_value"] = {
+                                "price": latest_val,
+                                "changeAmt": val_change,
+                                "changePercent": val_pct,
+                                "history": [{"date": f"{h['date']}T00:00:00.000Z", "value": h["value"]} for h in final_history]
+                            }
+                            with open(cache_path, "w", encoding="utf-8") as f:
+                                json.dump(c_data, f, indent=2, ensure_ascii=False)
+                except Exception:
+                    pass
+                return res_item
     except Exception as e:
         print(f"Error fetching KOSPI trade value from Daum: {e}")
 
@@ -674,7 +694,7 @@ def compute_kospi_adr(existing_item=None):
     adr_pct = round((adr_change / prev_adr) * 100, 2) if prev_adr != 0 else 0.0
 
     meta = INDICATORS_META.get("ADR_INFO", {})
-    return {
+    res_item = {
         "ticker": "ADR_INFO",
         "name": meta.get("name", "KOSPI ADR(20, %)"),
         "price": latest_adr,
@@ -687,6 +707,23 @@ def compute_kospi_adr(existing_item=None):
         "is_percent": True,
         "trade_date": adr_history[-1]["date"]
     }
+    try:
+        cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
+        if os.path.exists(cache_path):
+            with open(cache_path, "r", encoding="utf-8") as f:
+                c_data = json.load(f)
+            if isinstance(c_data, dict):
+                c_data["kospi_adr"] = {
+                    "price": latest_adr,
+                    "changeAmt": adr_change,
+                    "changePercent": adr_pct,
+                    "history": [{"date": f"{h['date']}T00:00:00.000Z", "value": h["value"]} for h in adr_history]
+                }
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    json.dump(c_data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+    return res_item
 
 def fetch_vkospi_direct(existing_item=None):
     """Fetch live VKOSPI from KRX MDCSTAT01201 using PyKRX with safe isolation."""
@@ -1185,7 +1222,7 @@ def fetch_all_market_data(force_refresh=False, wait_for_krx=False):
         fut_vkospi = executor.submit(fetch_vkospi_direct, all_data.get("VKOSPI"))
         naver_results = list(fut_naver)
         try:
-            vk_item = fut_vkospi.result(timeout=4.0)
+            vk_item = fut_vkospi.result(timeout=12.0)
         except Exception:
             vk_item = all_data.get("VKOSPI")
 
