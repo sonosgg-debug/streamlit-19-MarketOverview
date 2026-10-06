@@ -2,8 +2,6 @@ import os
 import sys
 import json
 import time
-import socket
-socket.setdefaulttimeout(15.0)
 from datetime import datetime, timezone, timedelta
 KST = timezone(timedelta(hours=9))
 import concurrent.futures
@@ -272,7 +270,6 @@ def task_kofia_preload():
             json.dump(new_liq_history, f, indent=4)
     except Exception as kofia_err:
         print(f"Error updating KOFIA data in background scraper: {kofia_err}", file=sys.stderr)
-
 
 def task_fundamentals(start_date, end_date):
     result = {}

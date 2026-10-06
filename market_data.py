@@ -9,8 +9,6 @@ import json
 import requests
 import subprocess
 import threading
-import socket
-socket.setdefaulttimeout(15.0)
 from datetime import datetime, timedelta, timezone
 
 KST = timezone(timedelta(hours=9))
@@ -195,7 +193,6 @@ def trigger_krx_background_update(wait=False):
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
 
-
 def get_fear_and_greed():
     """Fetch CNN Fear & Greed Index score and historical data."""
     try:
@@ -279,7 +276,6 @@ def get_krx_cache_data(force_update=False, wait=False):
 
     if should_update:
         trigger_krx_background_update(wait=wait)
-
 
     try:
         with open(cache_path, "r", encoding="utf-8") as f:
@@ -408,7 +404,6 @@ def fetch_naver_price(ticker):
 
     # 2순위 폴백: FinanceDataReader (네이버 API 장애 또는 누락 시 KRX 공식 시세로 무결성 보장)
     return fetch_fdr_price(ticker)
-
 
 def fetch_fdr_price(ticker):
     """
@@ -835,7 +830,6 @@ def fetch_vkospi_direct(existing_item=None):
     except Exception as e:
         pass
     return existing_item
-
 
 def fetch_kospi200_night_direct(existing_item=None, futures_item=None):
     """
