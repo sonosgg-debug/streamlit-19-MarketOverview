@@ -4,10 +4,30 @@ Ultra-lightweight, 100% Python-based implementation of MarketOverview
 Preserves the exact content layout and dark Glassmorphism visual design.
 """
 
+import sys
+# Python 3.12+ 및 Streamlit Cloud 환경에서 pykrx의 pkg_resources 모듈 임포트 에러 방지용 shim
+try:
+    import pkg_resources
+except Exception:
+    try:
+        import setuptools.command
+        import pkg_resources
+    except Exception:
+        import types
+        pkg_mock = types.ModuleType("pkg_resources")
+        pkg_mock.resource_filename = lambda *args, **kwargs: ""
+        pkg_mock.resource_string = lambda *args, **kwargs: b""
+        pkg_mock.Requirement = type("Requirement", (), {"parse": lambda s: s})
+        pkg_mock.get_distribution = lambda *args, **kwargs: type("Dist", (), {"version": "1.0.0"})()
+        sys.modules["pkg_resources"] = pkg_mock
+
 import streamlit as st
+import importlib
 from datetime import datetime, timezone, timedelta
 KST = timezone(timedelta(hours=9))
 from config import CATEGORIES, US_MARKET_TICKERS, K_MARKET_TICKERS, SEMI_MARKET_TICKERS
+import market_data
+importlib.reload(market_data)
 from market_data import fetch_all_market_data
 from card_component import render_card_grid
 
