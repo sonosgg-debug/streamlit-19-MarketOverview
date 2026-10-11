@@ -22,21 +22,27 @@ except Exception:
         sys.modules["pkg_resources"] = pkg_mock
 
 import streamlit as st
-import importlib
-from datetime import datetime, timezone, timedelta
-KST = timezone(timedelta(hours=9))
-from config import CATEGORIES, US_MARKET_TICKERS, K_MARKET_TICKERS, SEMI_MARKET_TICKERS
-import market_data
-importlib.reload(market_data)
-from market_data import fetch_all_market_data
-from card_component import render_card_grid
 
-# Page config
+# [가이드 05] Streamlit 명령 최우선 실행 보장 (StreamlitAPIException 및 무한 로딩 방어)
 st.set_page_config(
     page_title="Market Overview",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+import importlib
+from datetime import datetime, timezone, timedelta
+KST = timezone(timedelta(hours=9))
+
+try:
+    from config import CATEGORIES, US_MARKET_TICKERS, K_MARKET_TICKERS, SEMI_MARKET_TICKERS
+    import market_data
+    importlib.reload(market_data)
+    from market_data import fetch_all_market_data
+    from card_component import render_card_grid
+except Exception as e:
+    st.error(f"모듈 로드 중 오류가 발생했습니다: {e}")
+    st.stop()
 
 # Custom CSS for Glassmorphism & Dark Theme
 CUSTOM_CSS = """
