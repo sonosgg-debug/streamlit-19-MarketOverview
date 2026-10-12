@@ -43,6 +43,15 @@ _krx_updating = False
 
 def load_krx_auth():
     """Load KRX credentials from workspace or 00 API Key folder."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        krx_env_path = r"D:\AI Investing\KRXdata\.env"
+        if os.path.exists(krx_env_path):
+            load_dotenv(krx_env_path)
+    except Exception:
+        pass
+
     if not os.getenv("KRX_ID") or not os.getenv("KRX_PW"):
         parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         api_key_path = os.path.join(parent_dir, "00 API Key", "KRX ID&PW.txt")
@@ -161,54 +170,45 @@ def get_latest_expected_trading_day(target_date: str = None) -> str:
     fallback_str = trading_days[-1] if trading_days else (now_kst - timedelta(days=1)).strftime('%Y%m%d')
     return f"{fallback_str[:4]}-{fallback_str[4:6]}-{fallback_str[6:]}"
 
-_krx_update_lock = threading.Lock()
-_krx_updating = False
+_cache_file_lock = threading.Lock()
+_krx_pykrx_lock = threading.Lock()
+
+def update_krx_cache_json(updates: dict):
+    """Thread-safe update helper for krx_cache.json."""
+    with _cache_file_lock:
+        cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
+        try:
+            c_data = {}
+            if os.path.exists(cache_path):
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    c_data = json.load(f)
+            c_data.update(updates)
+            c_data["_meta"] = {"last_batch_update": datetime.now(KST).isoformat()}
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(c_data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Error updating krx_cache.json: {e}")
+
+def get_latest_expected_kofia_date() -> str:
+    """Returns the expected latest available KOFIA date (trading day with T+2 settlement lag)."""
+    trading_days = get_krx_trading_days(30)
+    now_kst = datetime.now(KST)
+    today_str = now_kst.strftime('%Y%m%d')
+    past_days = [d for d in trading_days if d < today_str]
+    if len(past_days) >= 2:
+        d_res = past_days[-2]
+        return f"{d_res[:4]}-{d_res[4:6]}-{d_res[6:]}"
+    return past_days[-1] if past_days else ""
 
 def trigger_krx_background_update(wait=False):
-    """Trigger update_krx_cache() in background or with safety timeout if wait=True."""
-    global _krx_updating
+    """Backward compatibility wrapper - runs fast update if requested."""
     if wait:
-        with _krx_update_lock:
-            try:
-                _krx_updating = True
-                from get_kospi_fundamentals import update_krx_cache
-                # Run with safety timeout so Cloud IP blocks don't freeze indefinitely
-                def _run():
-                    try:
-                        update_krx_cache()
-                    except Exception as err:
-                        print(f"Error in update_krx_cache worker: {err}")
-
-                worker_t = threading.Thread(target=_run, daemon=True)
-                worker_t.start()
-                worker_t.join(timeout=45.0)
-                if worker_t.is_alive():
-                    print("Warning: update_krx_cache timed out after 45.0s, proceeding with existing cache.")
-            except Exception as e:
-                print(f"Error in synchronous update_krx_cache: {e}")
-            finally:
-                _krx_updating = False
-        return
-
-    # Background non-blocking execution
-    with _krx_update_lock:
-        if _krx_updating:
-            return
-        _krx_updating = True
-
-    def _worker():
-        global _krx_updating
         try:
             from get_kospi_fundamentals import update_krx_cache
             update_krx_cache()
         except Exception as e:
-            print(f"Error in background update_krx_cache: {e}")
-        finally:
-            with _krx_update_lock:
-                _krx_updating = False
+            print(f"Error in update_krx_cache: {e}")
 
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
 
 def get_fear_and_greed():
     """Fetch CNN Fear & Greed Index score and historical data."""
@@ -250,49 +250,15 @@ def get_fear_and_greed():
     return None
 
 def get_krx_cache_data(force_update=False, wait=False):
-    """Read data from local krx_cache.json if available and trigger refresh if stale or forced."""
+    """Read data from local krx_cache.json if available."""
     cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
-
-    should_update = False
-    if force_update:
-        should_update = True
-        wait = True
-    elif not os.path.exists(cache_path):
-        should_update = True
-        wait = True  # File doesn't exist, must wait so first run has data
-    else:
+    if not os.path.exists(cache_path):
         try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                c_head = json.load(f)
-            meta = c_head.get("_meta", {})
-            last_update_str = meta.get("last_batch_update")
-            if last_update_str:
-                last_dt = datetime.fromisoformat(last_update_str)
-                now_kst = datetime.now(KST)
-                if last_dt.tzinfo is None:
-                    last_dt = last_dt.replace(tzinfo=KST)
-                if (now_kst - last_dt).total_seconds() > 14400:
-                    should_update = True
-            else:
-                should_update = True
+            from get_kospi_fundamentals import update_krx_cache
+            update_krx_cache()
+        except Exception as e:
+            print(f"Error initializing krx_cache.json: {e}")
 
-            # Check if PER history has the expected latest trading day's closing data
-            expected_trading_day = get_latest_expected_trading_day()
-            per_hist = c_head.get("per", {}).get("history", [])
-            if per_hist:
-                last_per_date = str(per_hist[-1].get("date", "")).split("T")[0]
-                if last_per_date < expected_trading_day:
-                    should_update = True
-                    wait = True
-            else:
-                should_update = True
-                wait = True
-        except Exception:
-            should_update = True
-            wait = True
-
-    if should_update:
-        trigger_krx_background_update(wait=wait)
 
     try:
         with open(cache_path, "r", encoding="utf-8") as f:
@@ -737,10 +703,10 @@ def compute_kospi_adr(existing_item=None):
         pass
     return res_item
 
-def fetch_vkospi_direct(existing_item=None):
+def fetch_vkospi_direct(existing_item=None, force=False):
     """Fetch live VKOSPI from KRX MDCSTAT01201 using PyKRX with safe isolation."""
     expected_day = get_latest_expected_trading_day()
-    if existing_item and existing_item.get("price") is not None:
+    if not force and existing_item and existing_item.get("price") is not None:
         hist = existing_item.get("history", [])
         if hist:
             last_d = str(hist[-1].get("date", "")).split("T")[0]
@@ -762,16 +728,17 @@ def fetch_vkospi_direct(existing_item=None):
         start_date = (today - timedelta(days=30)).strftime("%Y%m%d")
         end_date = today.strftime("%Y%m%d")
 
-        krx = KrxMdc()
-        res = krx.read(
-            locale='ko_KR',
-            indTpCd='1',
-            idxIndCd='300',
-            strtDd=start_date,
-            endDd=end_date,
-            share='1',
-            money='1'
-        )
+        with _krx_pykrx_lock:
+            krx = KrxMdc()
+            res = krx.read(
+                locale='ko_KR',
+                indTpCd='1',
+                idxIndCd='300',
+                strtDd=start_date,
+                endDd=end_date,
+                share='1',
+                money='1'
+            )
         output = res.get('output', [])
         if output and len(output) >= 2:
             latest = output[0]
@@ -822,31 +789,254 @@ def fetch_vkospi_direct(existing_item=None):
                 "trade_date": final_hist[-1]["date"]
             }
 
-            try:
-                cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
-                if os.path.exists(cache_path):
-                    with open(cache_path, "r", encoding="utf-8") as f:
-                        c_data = json.load(f)
-                    if isinstance(c_data, dict):
-                        c_data["vkospi"] = {
-                            "price": price,
-                            "changeAmt": change,
-                            "changePercent": pct,
-                            "open": open_p,
-                            "high": high_p,
-                            "low": low_p,
-                            "close": price,
-                            "history": [{"date": f"{h['date']}T00:00:00.000Z", "value": h["value"]} for h in final_hist]
-                        }
-                        with open(cache_path, "w", encoding="utf-8") as f:
-                            json.dump(c_data, f, indent=2, ensure_ascii=False)
-            except Exception:
-                pass
+            update_krx_cache_json({
+                "vkospi": {
+                    "price": price,
+                    "changeAmt": change,
+                    "changePercent": pct,
+                    "open": open_p,
+                    "high": high_p,
+                    "low": low_p,
+                    "close": price,
+                    "history": [{"date": f"{h['date']}T00:00:00.000Z", "value": h["value"]} for h in final_hist]
+                }
+            })
 
             return result_item
     except Exception as e:
-        pass
+        print(f"Error in fetch_vkospi_direct: {e}")
     return existing_item
+
+def fetch_fundamentals_direct(existing_per=None, existing_pbr=None, force=False):
+    """
+    Fetch KOSPI PER and PBR directly using PyKRX with a fast 35-day window and history merging.
+    Ultra-fast execution (~0.5s).
+    """
+    expected_day = get_latest_expected_trading_day()
+    if not force and existing_per and existing_pbr:
+        per_hist = existing_per.get("history", [])
+        if per_hist:
+            last_d = str(per_hist[-1].get("date", "")).split("T")[0]
+            if last_d >= expected_day:
+                return {
+                    "KOSPI_PER": existing_per,
+                    "KOSPI_PBR": existing_pbr
+                }
+
+    try:
+        load_krx_auth()
+        from get_kospi_fundamentals import task_fundamentals, format_iso_date
+        today = datetime.now(KST)
+        start_date = (today - timedelta(days=35)).strftime("%Y%m%d")
+        end_date = today.strftime("%Y%m%d")
+
+        with _krx_pykrx_lock:
+            fund_res = task_fundamentals(start_date, end_date)
+        if not fund_res:
+            fallback = {}
+            if existing_per: fallback["KOSPI_PER"] = existing_per
+            if existing_pbr: fallback["KOSPI_PBR"] = existing_pbr
+            return fallback
+
+        cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
+        old_cache = {}
+        if os.path.exists(cache_path):
+            try:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    old_cache = json.load(f)
+            except Exception:
+                pass
+
+        results = {}
+        cache_updates = {}
+        for key, ticker in [("per", "KOSPI_PER"), ("pbr", "KOSPI_PBR")]:
+            item = fund_res.get(key)
+            if not item:
+                if key == "per" and existing_per: results[ticker] = existing_per
+                if key == "pbr" and existing_pbr: results[ticker] = existing_pbr
+                continue
+
+            old_hist = old_cache.get(key, {}).get("history", [])
+            hist_map = {str(h['date'])[:10]: h['value'] for h in old_hist if 'date' in h}
+            for nh in item.get("history", []):
+                hist_map[str(nh['date'])[:10]] = nh['value']
+
+            merged_dates = sorted(hist_map.keys())
+            final_history = [{"date": format_iso_date(d), "value": hist_map[d]} for d in merged_dates][-200:]
+
+            latest_val = final_history[-1]['value']
+            prev_val = final_history[-2]['value'] if len(final_history) >= 2 else latest_val
+            chg = round(latest_val - prev_val, 2)
+            pct = round((chg / prev_val) * 100, 2) if prev_val != 0 else 0.0
+
+            meta = INDICATORS_META.get(ticker, {})
+            results[ticker] = {
+                "ticker": ticker,
+                "name": meta.get("name", ticker),
+                "price": latest_val,
+                "change_amt": chg,
+                "change_percent": pct,
+                "open": None, "high": None, "low": None, "close": latest_val,
+                "history": final_history,
+                "negative_favorable": meta.get("negative_favorable", False),
+                "is_integer_only": False,
+                "is_percent": False,
+                "trade_date": merged_dates[-1]
+            }
+            cache_updates[key] = {
+                "price": latest_val,
+                "changeAmt": chg,
+                "changePercent": pct,
+                "history": final_history
+            }
+
+        if cache_updates:
+            update_krx_cache_json(cache_updates)
+
+        return results
+    except Exception as e:
+        print(f"Error in fetch_fundamentals_direct: {e}")
+        fallback = {}
+        if existing_per: fallback["KOSPI_PER"] = existing_per
+        if existing_pbr: fallback["KOSPI_PBR"] = existing_pbr
+        return fallback
+
+def fetch_kofia_stats_direct(existing_dep=None, existing_cred=None, existing_liq=None, force=False):
+    """
+    Fetch Customer Deposits, Credit Balance, and Margin Call directly from KOFIA FreeSIS.
+    Completely decoupled from KRX / PyKRX, ultra-fast (~1.5s).
+    """
+    expected_kofia_day = get_latest_expected_kofia_date()
+
+    if not force and existing_dep and existing_cred and existing_liq:
+        dep_hist = existing_dep.get("history", [])
+        if dep_hist:
+            last_d = str(dep_hist[-1].get("date", "")).split("T")[0]
+            if last_d >= expected_kofia_day:
+                return {
+                    "CUSTOMER_DEPOSITS": existing_dep,
+                    "CREDIT_BALANCE": existing_cred,
+                    "MARGIN_CALL": existing_liq
+                }
+
+    try:
+        from get_kospi_fundamentals import fetch_kofia_deposits_credit, fetch_kofia_liquidation, get_data_path, format_iso_date
+        today_k = datetime.now(KST)
+        start_date_k = (today_k - timedelta(days=20)).strftime("%Y%m%d")
+        end_date_k = today_k.strftime("%Y%m%d")
+
+        deposit_map, credit_map = fetch_kofia_deposits_credit(start_date_k, end_date_k)
+        liq_map = fetch_kofia_liquidation(start_date_k, end_date_k)
+
+        # Update deposits_history.json
+        dep_path = get_data_path("deposits_history.json")
+        dep_history = []
+        if os.path.exists(dep_path):
+            try:
+                with open(dep_path, "r", encoding="utf-8") as f:
+                    dep_history = json.load(f)
+            except Exception:
+                dep_history = []
+        hist_map = {item['date']: item for item in dep_history}
+        common_dates = set(deposit_map.keys()) & set(credit_map.keys())
+        for d_str in common_dates:
+            hist_map[d_str] = {
+                'date': d_str,
+                'deposit': deposit_map[d_str],
+                'credit': credit_map[d_str]
+            }
+        new_dep_history = sorted(hist_map.values(), key=lambda x: x['date'])[-250:]
+        with open(dep_path, "w", encoding="utf-8") as f:
+            json.dump(new_dep_history, f, indent=4)
+
+        # Update liquidation_history.json
+        liq_path = get_data_path("liquidation_history.json")
+        liq_history = []
+        if os.path.exists(liq_path):
+            try:
+                with open(liq_path, "r", encoding="utf-8") as f:
+                    liq_history = json.load(f)
+            except Exception:
+                liq_history = []
+        hist_map_liq = {item['date']: item['liquidation'] for item in liq_history}
+        for d_str, val in liq_map.items():
+            hist_map_liq[d_str] = val
+        new_liq_history = [{"date": d, "liquidation": v} for d, v in sorted(hist_map_liq.items())][-250:]
+        with open(liq_path, "w", encoding="utf-8") as f:
+            json.dump(new_liq_history, f, indent=4)
+
+        results = {}
+        cache_updates = {}
+        if len(new_dep_history) >= 2:
+            dep_200 = new_dep_history[-200:]
+            latest_dep = round(float(dep_200[-1]['deposit']), 2)
+            prev_dep = round(float(dep_200[-2]['deposit']), 2)
+            chg_dep = round(latest_dep - prev_dep, 2)
+            pct_dep = round((chg_dep / prev_dep) * 100, 2) if prev_dep != 0 else 0.0
+            results["CUSTOMER_DEPOSITS"] = {
+                "ticker": "CUSTOMER_DEPOSITS",
+                "name": INDICATORS_META.get("CUSTOMER_DEPOSITS", {}).get("name", "고객예탁금 (단위:억원)"),
+                "price": latest_dep, "change_amt": chg_dep, "change_percent": pct_dep,
+                "open": None, "high": None, "low": None, "close": latest_dep,
+                "history": [{"date": format_iso_date(x['date']), "value": round(float(x['deposit']), 2)} for x in dep_200],
+                "negative_favorable": False, "is_integer_only": True, "is_percent": False,
+                "trade_date": dep_200[-1]['date']
+            }
+            cache_updates["customer_deposits"] = {
+                "price": latest_dep, "changeAmt": chg_dep, "changePercent": pct_dep,
+                "history": [{"date": format_iso_date(x['date']), "value": round(float(x['deposit']), 2)} for x in dep_200]
+            }
+
+            latest_cred = round(float(dep_200[-1]['credit']), 2)
+            prev_cred = round(float(dep_200[-2]['credit']), 2)
+            chg_cred = round(latest_cred - prev_cred, 2)
+            pct_cred = round((chg_cred / prev_cred) * 100, 2) if prev_cred != 0 else 0.0
+            results["CREDIT_BALANCE"] = {
+                "ticker": "CREDIT_BALANCE",
+                "name": INDICATORS_META.get("CREDIT_BALANCE", {}).get("name", "신용공여 잔고 (단위:억원)"),
+                "price": latest_cred, "change_amt": chg_cred, "change_percent": pct_cred,
+                "open": None, "high": None, "low": None, "close": latest_cred,
+                "history": [{"date": format_iso_date(x['date']), "value": round(float(x['credit']), 2)} for x in dep_200],
+                "negative_favorable": False, "is_integer_only": True, "is_percent": False,
+                "trade_date": dep_200[-1]['date']
+            }
+            cache_updates["credit_balance"] = {
+                "price": latest_cred, "changeAmt": chg_cred, "changePercent": pct_cred,
+                "history": [{"date": format_iso_date(x['date']), "value": round(float(x['credit']), 2)} for x in dep_200]
+            }
+
+        if len(new_liq_history) >= 2:
+            liq_200 = new_liq_history[-200:]
+            latest_liq = round(float(liq_200[-1]['liquidation']), 2)
+            prev_liq = round(float(liq_200[-2]['liquidation']), 2)
+            chg_liq = round(latest_liq - prev_liq, 2)
+            pct_liq = round((chg_liq / prev_liq) * 100, 2) if prev_liq != 0 else 0.0
+            results["MARGIN_CALL"] = {
+                "ticker": "MARGIN_CALL",
+                "name": INDICATORS_META.get("MARGIN_CALL", {}).get("name", "반대매매금액 (단위:억원)"),
+                "price": latest_liq, "change_amt": chg_liq, "change_percent": pct_liq,
+                "open": None, "high": None, "low": None, "close": latest_liq,
+                "history": [{"date": format_iso_date(x['date']), "value": round(float(x['liquidation']), 2)} for x in liq_200],
+                "negative_favorable": True, "is_integer_only": True, "is_percent": False,
+                "trade_date": liq_200[-1]['date']
+            }
+            cache_updates["margin_call"] = {
+                "price": latest_liq, "changeAmt": chg_liq, "changePercent": pct_liq,
+                "history": [{"date": format_iso_date(x['date']), "value": round(float(x['liquidation']), 2)} for x in liq_200]
+            }
+
+        if cache_updates:
+            update_krx_cache_json(cache_updates)
+
+        return results
+    except Exception as e:
+        print(f"Error in fetch_kofia_stats_direct: {e}")
+        fallback = {}
+        if existing_dep: fallback["CUSTOMER_DEPOSITS"] = existing_dep
+        if existing_cred: fallback["CREDIT_BALANCE"] = existing_cred
+        if existing_liq: fallback["MARGIN_CALL"] = existing_liq
+        return fallback
+
 
 def fetch_kospi200_night_direct(existing_item=None, futures_item=None):
     """
@@ -1214,8 +1404,8 @@ def fetch_all_market_data(force_refresh=False, wait_for_krx=False):
     """Fetch and aggregate all indicators across US, K-Market, and Semiconductor tabs."""
     all_data = {}
 
-    # 1. KRX Cache Data (provides KOFIA deposits/credit/margin_call, Night Futures, PER, PBR, ADR)
-    krx_data = get_krx_cache_data(force_update=force_refresh, wait=wait_for_krx)
+    # 1. Base data from local KRX Cache
+    krx_data = get_krx_cache_data(force_update=False, wait=False)
     all_data.update(krx_data)
 
     # 2. CNN Fear & Greed
@@ -1223,19 +1413,46 @@ def fetch_all_market_data(force_refresh=False, wait_for_krx=False):
     if fg_data:
         all_data["FEAR_GREED"] = fg_data
 
-    # 3. Korean stocks, indices, and KOSPI200 Futures via Naver Mobile API (live) & VKOSPI via KRX MDC
+    # 3. Korean Market parallel direct updates
     korean_tickers = [
         "005930.KS", "009150.KS", "402340.KS", "000660.KS",
         "^KS11", "^KQ11", "KOSPI200_FUTURES"
     ]
     with ThreadPoolExecutor(max_workers=8) as executor:
         fut_naver = executor.map(fetch_naver_price, korean_tickers)
-        fut_vkospi = executor.submit(fetch_vkospi_direct, all_data.get("VKOSPI"))
+        fut_vkospi = executor.submit(fetch_vkospi_direct, all_data.get("VKOSPI"), force_refresh)
+        fut_kofia = executor.submit(
+            fetch_kofia_stats_direct,
+            all_data.get("CUSTOMER_DEPOSITS"),
+            all_data.get("CREDIT_BALANCE"),
+            all_data.get("MARGIN_CALL"),
+            force_refresh
+        )
+        fut_fund = executor.submit(
+            fetch_fundamentals_direct,
+            all_data.get("KOSPI_PER"),
+            all_data.get("KOSPI_PBR"),
+            force_refresh
+        )
+
         naver_results = list(fut_naver)
         try:
-            vk_item = fut_vkospi.result(timeout=12.0)
-        except Exception:
+            vk_item = fut_vkospi.result(timeout=10.0)
+        except Exception as e:
+            print(f"Error fetching VKOSPI: {e}")
             vk_item = all_data.get("VKOSPI")
+
+        try:
+            kofia_items = fut_kofia.result(timeout=10.0)
+        except Exception as e:
+            print(f"Error fetching KOFIA: {e}")
+            kofia_items = {}
+
+        try:
+            fund_items = fut_fund.result(timeout=10.0)
+        except Exception as e:
+            print(f"Error fetching Fundamentals: {e}")
+            fund_items = {}
 
     for item in naver_results:
         if item:
@@ -1243,6 +1460,12 @@ def fetch_all_market_data(force_refresh=False, wait_for_krx=False):
 
     if vk_item:
         all_data["VKOSPI"] = vk_item
+
+    if kofia_items:
+        all_data.update(kofia_items)
+
+    if fund_items:
+        all_data.update(fund_items)
 
     # 3b. Compute KOSPI RSI dynamically from live KOSPI (^KS11) daily close history
     ks11_item = all_data.get("^KS11")

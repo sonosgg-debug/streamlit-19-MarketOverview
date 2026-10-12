@@ -461,12 +461,12 @@ def sync_adr_history_pykrx():
     today_dt = datetime.now(KST)
     needs_save = False
     
-    # Check today (if after 15:30 KST on weekday) and the last 10 days
+    # Check today (if after 15:30 KST on weekday) and the last 3 days
     check_days = []
     if today_dt.weekday() < 5 and (today_dt.hour > 15 or (today_dt.hour == 15 and today_dt.minute >= 30)):
         if today_dt.strftime("%Y%m%d") not in KRX_HOLIDAYS:
             check_days.append(today_dt)
-    for i in range(1, 10):
+    for i in range(1, 4):
         d = today_dt - timedelta(days=i)
         if d.weekday() < 5 and d.strftime("%Y%m%d") not in KRX_HOLIDAYS:
             check_days.append(d)
@@ -700,7 +700,19 @@ def task_night_futures(futures_price_ref):
 def update_krx_cache():
     """Fetch all K-Market indicators and save to krx_cache.json in-process. Returns the result dict."""
     today = datetime.now(KST)
-    start_date = (today - timedelta(days=365)).strftime("%Y%m%d")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    cache_path = os.path.join(script_dir, 'krx_cache.json')
+    has_history = False
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f_chk:
+                c_chk = json.load(f_chk)
+            if len(c_chk.get("per", {}).get("history", [])) >= 20:
+                has_history = True
+        except Exception:
+            pass
+
+    start_date = (today - timedelta(days=35 if has_history else 365)).strftime("%Y%m%d")
     end_date = today.strftime("%Y%m%d")
     
     result = {}
@@ -716,9 +728,23 @@ def update_krx_cache():
             try:
                 fund_data = task_fundamentals(start_date, end_date)
                 if fund_data:
+                    if has_history:
+                        try:
+                            with open(cache_path, "r", encoding="utf-8") as f_m:
+                                old_c = json.load(f_m)
+                            for k in ["per", "pbr"]:
+                                if k in fund_data and k in old_c:
+                                    h_map = {str(x['date'])[:10]: x['value'] for x in old_c[k].get("history", [])}
+                                    for nx in fund_data[k].get("history", []):
+                                        h_map[str(nx['date'])[:10]] = nx['value']
+                                    m_dates = sorted(h_map.keys())
+                                    fund_data[k]["history"] = [{"date": format_iso_date(d), "value": h_map[d]} for d in m_dates][-200:]
+                        except Exception:
+                            pass
                     krx_res.update(fund_data)
             except Exception as e:
                 print(f"Error in task_fundamentals: {e}", file=sys.stderr)
+
                 
             time.sleep(0.3)
             try:
