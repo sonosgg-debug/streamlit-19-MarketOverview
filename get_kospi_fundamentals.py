@@ -64,6 +64,12 @@ except Exception:
         pkg_mock.get_distribution = lambda *args, **kwargs: type("Dist", (), {"version": "1.0.0"})()
         sys.modules["pkg_resources"] = pkg_mock
 
+try:
+    from market_data import patch_pykrx_auth
+    patch_pykrx_auth()
+except Exception:
+    pass
+
 stock = None
 KrxWebIo = None
 try:

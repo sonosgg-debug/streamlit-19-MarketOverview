@@ -40,6 +40,88 @@ from config import INDICATORS_META, INTEGER_ONLY_TICKERS, KRX_HOLIDAYS
 
 _krx_update_lock = threading.Lock()
 _krx_updating = False
+_pykrx_patched = False
+
+def patch_pykrx_auth():
+    """
+    Monkey-patch pykrx auth to automatically handle CD010 (password change postponement)
+    and ensure console outputs never raise UnicodeEncodeError on Windows CP949 environments.
+    """
+    global _pykrx_patched
+    if _pykrx_patched:
+        return
+    try:
+        import pykrx.website.comm.auth as krx_auth
+        
+        orig_login_krx = getattr(krx_auth, "login_krx", None)
+        if not orig_login_krx:
+            return
+
+        def robust_login_krx(login_id: str, login_pw: str, session=None) -> bool:
+            if session is None:
+                session = requests.Session()
+
+            krx_auth.warmup_krx_session(session)
+
+            payload = {
+                "mbrNm": "",
+                "telNo": "",
+                "di": "",
+                "certType": "",
+                "mbrId": login_id,
+                "pw": login_pw,
+            }
+            headers = {"User-Agent": krx_auth.USER_AGENT, "Referer": krx_auth.LOGIN_PAGE}
+
+            try:
+                resp = session.post(krx_auth.LOGIN_URL, data=payload, headers=headers, timeout=15)
+                data = resp.json()
+            except Exception as e:
+                print(f"[KRX Auth] Login request failed: {e}")
+                return False
+
+            error_code = data.get("_error_code", "")
+            error_message = data.get("_error_message", "")
+
+            # CD010: 패스워드 변경 필요 -> 자동 연기(postpone) 처리 후 재로그인
+            if error_code == "CD010":
+                try:
+                    postpone_url = "https://data.krx.co.kr/contents/MDC/COMS/client/postponePasswordChange.cmd"
+                    session.post(postpone_url, headers=headers, timeout=15)
+                    payload["skipDup"] = "Y"
+                    resp = session.post(krx_auth.LOGIN_URL, data=payload, headers=headers, timeout=15)
+                    data = resp.json()
+                    error_code = data.get("_error_code", "")
+                    error_message = data.get("_error_message", "")
+                except Exception:
+                    pass
+
+                if error_code == "CD010":
+                    print("[KRX 경고] KRX 비밀번호 변경이 필요합니다.")
+                    print(f"   오류 메시지: {error_message}")
+                    return False
+
+            # CD011: 중복 로그인 (skipDup 처리)
+            if error_code == "CD011":
+                payload["skipDup"] = "Y"
+                try:
+                    resp = session.post(krx_auth.LOGIN_URL, data=payload, headers=headers, timeout=15)
+                    data = resp.json()
+                    error_code = data.get("_error_code", "")
+                    error_message = data.get("_error_message", "")
+                except Exception:
+                    pass
+
+            if error_code != "CD001":
+                print(f"[KRX 경고] KRX 로그인 실패: {error_message} (코드: {error_code})")
+                return False
+
+            return True
+
+        krx_auth.login_krx = robust_login_krx
+        _pykrx_patched = True
+    except Exception as e:
+        pass
 
 def load_krx_auth():
     """Load KRX credentials from workspace or 00 API Key folder."""
@@ -68,6 +150,8 @@ def load_krx_auth():
                             os.environ["KRX_PW"] = line.split(":", 1)[1].strip()
             except Exception:
                 pass
+
+    patch_pykrx_auth()
 
 load_krx_auth()
 
@@ -306,7 +390,8 @@ def get_krx_cache_data(force_update=False, wait=False):
                 "history": history[-200:],
                 "negative_favorable": meta.get("negative_favorable", False),
                 "is_integer_only": ticker in INTEGER_ONLY_TICKERS,
-                "is_percent": meta.get("is_percent", False)
+                "is_percent": meta.get("is_percent", False),
+                "trade_date": history[-1]["date"] if history else None
             }
         return krx_map
     except Exception as e:
@@ -710,7 +795,7 @@ def fetch_vkospi_direct(existing_item=None, force=False):
         hist = existing_item.get("history", [])
         if hist:
             last_d = str(hist[-1].get("date", "")).split("T")[0]
-            if last_d >= expected_day:
+            if last_d >= expected_day and len(hist) >= 180:
                 return existing_item
         else:
             return existing_item
@@ -725,7 +810,7 @@ def fetch_vkospi_direct(existing_item=None, force=False):
                 return 'dbms/MDC/STAT/standard/MDCSTAT01201'
 
         today = datetime.now(KST)
-        start_date = (today - timedelta(days=30)).strftime("%Y%m%d")
+        start_date = (today - timedelta(days=350)).strftime("%Y%m%d")
         end_date = today.strftime("%Y%m%d")
 
         with _krx_pykrx_lock:
@@ -762,14 +847,23 @@ def fetch_vkospi_direct(existing_item=None, force=False):
                 if len(d_fmt) == 10:
                     new_hist.append({"date": d_fmt, "value": round(float(str(row['CLSPRC_IDX']).replace(',', '')), 2)})
 
-            if existing_item and existing_item.get("history"):
-                hist_map = {str(h["date"]).split("T")[0]: h["value"] for h in existing_item["history"]}
-                for nh in new_hist:
-                    hist_map[nh["date"]] = nh["value"]
-                sorted_dates = sorted(hist_map.keys())
-                final_hist = [{"date": d, "value": hist_map[d]} for d in sorted_dates][-200:]
-            else:
-                final_hist = new_hist[-200:]
+            cache_hist = []
+            if not (existing_item and existing_item.get("history")):
+                try:
+                    cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
+                    if os.path.exists(cache_path):
+                        with open(cache_path, "r", encoding="utf-8") as f:
+                            c_data = json.load(f)
+                        cache_hist = c_data.get("vkospi", {}).get("history", [])
+                except Exception:
+                    pass
+
+            base_hist = (existing_item.get("history") if existing_item and existing_item.get("history") else cache_hist) or []
+            hist_map = {str(h["date"]).split("T")[0]: h["value"] for h in base_hist if "date" in h and "value" in h}
+            for nh in new_hist:
+                hist_map[nh["date"]] = nh["value"]
+            sorted_dates = sorted(hist_map.keys())
+            final_hist = [{"date": d, "value": hist_map[d]} for d in sorted_dates][-200:]
 
             meta = INDICATORS_META.get("VKOSPI", {})
             result_item = {
@@ -807,17 +901,70 @@ def fetch_vkospi_direct(existing_item=None, force=False):
         print(f"Error in fetch_vkospi_direct: {e}")
     return existing_item
 
+def _estimate_fundamentals_fallback(old_cache, existing_per, existing_pbr, expected_day):
+    """
+    Mathematical fallback estimation for KOSPI PER and PBR when KRX server is unreachable.
+    Uses aggregate earnings stability: PER_t = PER_{t-1} * (KOSPI_t / KOSPI_{t-1}).
+    """
+    try:
+        from get_kospi_fundamentals import format_iso_date
+        per_item = existing_per or old_cache.get("per")
+        pbr_item = existing_pbr or old_cache.get("pbr")
+        if not per_item or not pbr_item:
+            return {}
+
+        per_hist = per_item.get("history", [])
+        if not per_hist:
+            return {}
+
+        last_date = str(per_hist[-1]["date"]).split("T")[0]
+        if last_date >= expected_day:
+            return {
+                "per": {"history": per_hist},
+                "pbr": {"history": pbr_item.get("history", [])}
+            }
+
+        naver_ks11 = fetch_naver_price("^KS11")
+        if not naver_ks11 or not naver_ks11.get("history"):
+            return {}
+
+        ks11_map = {str(h["date"]).split("T")[0]: h["value"] for h in naver_ks11["history"]}
+        if last_date not in ks11_map or expected_day not in ks11_map:
+            return {}
+
+        k_prev = ks11_map[last_date]
+        k_now = ks11_map[expected_day]
+        if k_prev <= 0:
+            return {}
+
+        ratio = k_now / k_prev
+        last_per = float(per_hist[-1]["value"])
+        last_pbr = float(pbr_item["history"][-1]["value"]) if pbr_item.get("history") else 1.0
+
+        est_per = round(last_per * ratio, 2)
+        est_pbr = round(last_pbr * ratio, 2)
+
+        new_per_hist = list(per_hist) + [{"date": format_iso_date(expected_day), "value": est_per}]
+        new_pbr_hist = list(pbr_item.get("history", [])) + [{"date": format_iso_date(expected_day), "value": est_pbr}]
+
+        return {
+            "per": {"history": new_per_hist},
+            "pbr": {"history": new_pbr_hist}
+        }
+    except Exception as e:
+        print(f"Error in _estimate_fundamentals_fallback: {e}")
+        return {}
+
 def fetch_fundamentals_direct(existing_per=None, existing_pbr=None, force=False):
     """
-    Fetch KOSPI PER and PBR directly using PyKRX with a fast 35-day window and history merging.
-    Ultra-fast execution (~0.5s).
+    Fetch KOSPI PER and PBR directly using PyKRX with history merging and live fallback estimation.
     """
     expected_day = get_latest_expected_trading_day()
     if not force and existing_per and existing_pbr:
         per_hist = existing_per.get("history", [])
         if per_hist:
             last_d = str(per_hist[-1].get("date", "")).split("T")[0]
-            if last_d >= expected_day:
+            if last_d >= expected_day and len(per_hist) >= 180:
                 return {
                     "KOSPI_PER": existing_per,
                     "KOSPI_PBR": existing_pbr
@@ -827,16 +974,6 @@ def fetch_fundamentals_direct(existing_per=None, existing_pbr=None, force=False)
         load_krx_auth()
         from get_kospi_fundamentals import task_fundamentals, format_iso_date
         today = datetime.now(KST)
-        start_date = (today - timedelta(days=35)).strftime("%Y%m%d")
-        end_date = today.strftime("%Y%m%d")
-
-        with _krx_pykrx_lock:
-            fund_res = task_fundamentals(start_date, end_date)
-        if not fund_res:
-            fallback = {}
-            if existing_per: fallback["KOSPI_PER"] = existing_per
-            if existing_pbr: fallback["KOSPI_PBR"] = existing_pbr
-            return fallback
 
         cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
         old_cache = {}
@@ -846,6 +983,27 @@ def fetch_fundamentals_direct(existing_per=None, existing_pbr=None, force=False)
                     old_cache = json.load(f)
             except Exception:
                 pass
+
+        per_cache_len = len(old_cache.get("per", {}).get("history", []))
+        days_back = 350 if (per_cache_len < 190 or force) else 45
+        start_date = (today - timedelta(days=days_back)).strftime("%Y%m%d")
+        end_date = today.strftime("%Y%m%d")
+
+        fund_res = {}
+        with _krx_pykrx_lock:
+            try:
+                fund_res = task_fundamentals(start_date, end_date)
+            except Exception as e:
+                print(f"[Fundamentals Direct] task_fundamentals error: {e}")
+
+        if not fund_res or not fund_res.get("per"):
+            fund_res = _estimate_fundamentals_fallback(old_cache, existing_per, existing_pbr, expected_day)
+
+        if not fund_res:
+            fallback = {}
+            if existing_per: fallback["KOSPI_PER"] = existing_per
+            if existing_pbr: fallback["KOSPI_PBR"] = existing_pbr
+            return fallback
 
         results = {}
         cache_updates = {}
@@ -857,7 +1015,8 @@ def fetch_fundamentals_direct(existing_per=None, existing_pbr=None, force=False)
                 continue
 
             old_hist = old_cache.get(key, {}).get("history", [])
-            hist_map = {str(h['date'])[:10]: h['value'] for h in old_hist if 'date' in h}
+            base_hist = (existing_per.get("history") if key == "per" and existing_per and existing_per.get("history") else None) or old_hist
+            hist_map = {str(h['date'])[:10]: h['value'] for h in base_hist if 'date' in h and 'value' in h}
             for nh in item.get("history", []):
                 hist_map[str(nh['date'])[:10]] = nh['value']
 
@@ -1437,19 +1596,19 @@ def fetch_all_market_data(force_refresh=False, wait_for_krx=False):
 
         naver_results = list(fut_naver)
         try:
-            vk_item = fut_vkospi.result(timeout=10.0)
+            vk_item = fut_vkospi.result(timeout=25.0)
         except Exception as e:
             print(f"Error fetching VKOSPI: {e}")
             vk_item = all_data.get("VKOSPI")
 
         try:
-            kofia_items = fut_kofia.result(timeout=10.0)
+            kofia_items = fut_kofia.result(timeout=25.0)
         except Exception as e:
             print(f"Error fetching KOFIA: {e}")
             kofia_items = {}
 
         try:
-            fund_items = fut_fund.result(timeout=10.0)
+            fund_items = fut_fund.result(timeout=25.0)
         except Exception as e:
             print(f"Error fetching Fundamentals: {e}")
             fund_items = {}
