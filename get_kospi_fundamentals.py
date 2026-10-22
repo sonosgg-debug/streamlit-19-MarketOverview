@@ -349,8 +349,30 @@ def task_vkospi(start_date, end_date):
     if KrxWebIo is None:
         return result
     try:
-        krx = KrxMdc()
-        res = krx.read(
+        class RobustKrxMdc(KrxMdc):
+            def read_safe(self, **params):
+                for attempt in range(2):
+                    try:
+                        res = self.read(**params)
+                        if res and isinstance(res, dict) and res.get('output'):
+                            return res
+                    except Exception as e:
+                        print(f"[task_vkospi] Attempt {attempt+1} failed: {e}", file=sys.stderr)
+                    try:
+                        import pykrx.website.comm.auth as krx_auth
+                        login_id = os.getenv("KRX_ID")
+                        login_pw = os.getenv("KRX_PW")
+                        if login_id and login_pw:
+                            s = krx_auth.get_auth_session()
+                            if s:
+                                s.is_authenticated = False
+                                s.refresh(login_id, login_pw)
+                    except Exception:
+                        pass
+                return None
+
+        krx = RobustKrxMdc()
+        res = krx.read_safe(
             locale='ko_KR',
             indTpCd='1',
             idxIndCd='300',
@@ -359,7 +381,7 @@ def task_vkospi(start_date, end_date):
             share='1',
             money='1'
         )
-        output = res.get('output', [])
+        output = res.get('output', []) if res else []
         if output and len(output) >= 2:
             latest = output[0]
             prev = output[1]

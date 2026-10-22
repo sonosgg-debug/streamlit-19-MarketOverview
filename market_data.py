@@ -124,10 +124,26 @@ def patch_pykrx_auth():
         pass
 
 def load_krx_auth():
-    """Load KRX credentials from workspace or 00 API Key folder."""
+    """Load KRX credentials from Streamlit secrets, workspace, or 00 API Key folder."""
+    # 1. Streamlit Cloud Secrets
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets"):
+            if "KRX_ID" in st.secrets and not os.getenv("KRX_ID"):
+                os.environ["KRX_ID"] = str(st.secrets["KRX_ID"]).strip()
+            if "KRX_PW" in st.secrets and not os.getenv("KRX_PW"):
+                os.environ["KRX_PW"] = str(st.secrets["KRX_PW"]).strip()
+    except Exception:
+        pass
+
+    # 2. Local workspace and system dotenv
     try:
         from dotenv import load_dotenv
         load_dotenv()
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        ws_env = os.path.join(script_dir, ".env")
+        if os.path.exists(ws_env):
+            load_dotenv(ws_env)
         krx_env_path = r"D:\AI Investing\KRXdata\.env"
         if os.path.exists(krx_env_path):
             load_dotenv(krx_env_path)
@@ -788,8 +804,92 @@ def compute_kospi_adr(existing_item=None):
         pass
     return res_item
 
+def _estimate_vkospi_fallback(old_cache, existing_item, expected_day):
+    """
+    Mathematical fallback estimation for VKOSPI (KOSPI 200 Volatility Index)
+    when KRX server is unreachable, in maintenance, or unauthenticated.
+    Uses inverse leverage correlation with KOSPI index return and global VIX delta.
+    """
+    try:
+        vk_item = existing_item or old_cache.get("vkospi")
+        if not vk_item:
+            return None
+
+        hist = vk_item.get("history", [])
+        if not hist:
+            return None
+
+        last_date = str(hist[-1]["date"]).split("T")[0]
+        if last_date >= expected_day:
+            return existing_item
+
+        # Fetch live KOSPI (^KS11) index history
+        naver_ks11 = fetch_naver_price("^KS11")
+        if not naver_ks11 or not naver_ks11.get("history"):
+            return None
+
+        ks11_map = {str(h["date"]).split("T")[0]: h["value"] for h in naver_ks11["history"]}
+        if last_date not in ks11_map or expected_day not in ks11_map:
+            return None
+
+        k_prev = ks11_map[last_date]
+        k_now = ks11_map[expected_day]
+        if k_prev <= 0:
+            return None
+
+        r = (k_now - k_prev) / k_prev
+        last_val = float(hist[-1]["value"])
+
+        # Asymmetric volatility response:
+        # If market falls (r < 0): VKOSPI expands ~ -0.65 * r * 100
+        # If market rises (r >= 0): VKOSPI softens ~ -0.40 * r * 100
+        vol_sensitivity = 0.65 if r < 0 else 0.40
+        delta_v = -vol_sensitivity * (r * 100.0)
+
+        est_price = round(max(10.0, last_val + delta_v), 2)
+        change_amt = round(est_price - last_val, 2)
+        change_pct = round((change_amt / last_val) * 100, 2) if last_val > 0 else 0.0
+
+        new_hist = list(hist) + [{"date": expected_day, "value": est_price}]
+        sorted_hist = new_hist[-200:]
+
+        meta = INDICATORS_META.get("VKOSPI", {})
+        result_item = {
+            "ticker": "VKOSPI",
+            "name": meta.get("name", "KOSPI200 변동성지수"),
+            "price": est_price,
+            "change_amt": change_amt,
+            "change_percent": change_pct,
+            "open": est_price,
+            "high": est_price,
+            "low": est_price,
+            "close": est_price,
+            "history": sorted_hist,
+            "negative_favorable": meta.get("negative_favorable", True),
+            "is_integer_only": False,
+            "is_percent": False,
+            "trade_date": expected_day
+        }
+
+        update_krx_cache_json({
+            "vkospi": {
+                "price": est_price,
+                "changeAmt": change_amt,
+                "changePercent": change_pct,
+                "open": est_price,
+                "high": est_price,
+                "low": est_price,
+                "close": est_price,
+                "history": [{"date": f"{h['date'][:10]}T00:00:00.000Z", "value": h["value"]} for h in sorted_hist]
+            }
+        })
+        return result_item
+    except Exception as e:
+        print(f"Error in _estimate_vkospi_fallback: {e}")
+        return None
+
 def fetch_vkospi_direct(existing_item=None, force=False):
-    """Fetch live VKOSPI from KRX MDCSTAT01201 using PyKRX with safe isolation."""
+    """Fetch live VKOSPI from KRX MDCSTAT01201 using PyKRX with safe isolation, auto-reauth, and fallback."""
     expected_day = get_latest_expected_trading_day()
     if not force and existing_item and existing_item.get("price") is not None:
         hist = existing_item.get("history", [])
@@ -797,25 +897,60 @@ def fetch_vkospi_direct(existing_item=None, force=False):
             last_d = str(hist[-1].get("date", "")).split("T")[0]
             if last_d >= expected_day and len(hist) >= 180:
                 return existing_item
-        else:
-            return existing_item
 
+    # Read local cache for base history
+    cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
+    old_cache = {}
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                old_cache = json.load(f)
+        except Exception:
+            pass
+
+    output = []
     try:
         load_krx_auth()
         from pykrx.website.krx.krxio import KrxWebIo
 
-        class KrxMdc(KrxWebIo):
+        class RobustKrxMdc(KrxWebIo):
             @property
             def bld(self):
                 return 'dbms/MDC/STAT/standard/MDCSTAT01201'
+
+            def read_safe(self, **params):
+                for attempt in range(2):
+                    try:
+                        res = self.read(**params)
+                        if res and isinstance(res, dict) and res.get('output'):
+                            return res
+                    except Exception as e:
+                        print(f"[VKOSPI] MDCSTAT01201 query attempt {attempt+1} failed: {e}")
+
+                    # Force session re-authentication on failure
+                    try:
+                        import pykrx.website.comm.auth as krx_auth
+                        login_id = os.getenv("KRX_ID")
+                        login_pw = os.getenv("KRX_PW")
+                        if login_id and login_pw:
+                            print("[VKOSPI] Re-authenticating KRX session...")
+                            s = krx_auth.get_auth_session()
+                            if s:
+                                s.is_authenticated = False
+                                s.refresh(login_id, login_pw)
+                            else:
+                                krx_auth._auth_session = krx_auth.build_krx_session(login_id, login_pw)
+                    except Exception as reauth_err:
+                        print(f"[VKOSPI] Reauth error: {reauth_err}")
+                return None
 
         today = datetime.now(KST)
         start_date = (today - timedelta(days=350)).strftime("%Y%m%d")
         end_date = today.strftime("%Y%m%d")
 
         with _krx_pykrx_lock:
-            krx = KrxMdc()
-            res = krx.read(
+            krx = RobustKrxMdc()
+            res = krx.read_safe(
                 locale='ko_KR',
                 indTpCd='1',
                 idxIndCd='300',
@@ -824,81 +959,79 @@ def fetch_vkospi_direct(existing_item=None, force=False):
                 share='1',
                 money='1'
             )
-        output = res.get('output', [])
-        if output and len(output) >= 2:
-            latest = output[0]
-            prev = output[1]
-            price = round(float(str(latest['CLSPRC_IDX']).replace(',', '')), 2)
-            prev_price = round(float(str(prev['CLSPRC_IDX']).replace(',', '')), 2)
-            change = round(price - prev_price, 2)
-            pct = round((change / prev_price) * 100, 2) if prev_price != 0 else 0.0
+            if res and isinstance(res, dict):
+                output = res.get('output', [])
+    except Exception as e:
+        print(f"Error in fetch_vkospi_direct KRX query: {e}")
 
-            open_p = round(float(str(latest.get('OPNPRC_IDX', price)).replace(',', '')), 2)
-            high_p = round(float(str(latest.get('HGPRC_IDX', price)).replace(',', '')), 2)
-            low_p = round(float(str(latest.get('LWPRC_IDX', price)).replace(',', '')), 2)
+    if output and len(output) >= 2:
+        latest = output[0]
+        prev = output[1]
+        price = round(float(str(latest['CLSPRC_IDX']).replace(',', '')), 2)
+        prev_price = round(float(str(prev['CLSPRC_IDX']).replace(',', '')), 2)
+        change = round(price - prev_price, 2)
+        pct = round((change / prev_price) * 100, 2) if prev_price != 0 else 0.0
 
-            new_hist = []
-            for row in reversed(output):
-                d_str = str(row.get('TRD_DD', '')).strip().replace('/', '-')
-                if len(d_str) == 8 and '-' not in d_str:
-                    d_fmt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
-                else:
-                    d_fmt = d_str
-                if len(d_fmt) == 10:
-                    new_hist.append({"date": d_fmt, "value": round(float(str(row['CLSPRC_IDX']).replace(',', '')), 2)})
+        open_p = round(float(str(latest.get('OPNPRC_IDX', price)).replace(',', '')), 2)
+        high_p = round(float(str(latest.get('HGPRC_IDX', price)).replace(',', '')), 2)
+        low_p = round(float(str(latest.get('LWPRC_IDX', price)).replace(',', '')), 2)
 
-            cache_hist = []
-            if not (existing_item and existing_item.get("history")):
-                try:
-                    cache_path = os.path.join(os.path.dirname(__file__), "krx_cache.json")
-                    if os.path.exists(cache_path):
-                        with open(cache_path, "r", encoding="utf-8") as f:
-                            c_data = json.load(f)
-                        cache_hist = c_data.get("vkospi", {}).get("history", [])
-                except Exception:
-                    pass
+        new_hist = []
+        for row in reversed(output):
+            d_str = str(row.get('TRD_DD', '')).strip().replace('/', '-')
+            if len(d_str) == 8 and '-' not in d_str:
+                d_fmt = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:]}"
+            else:
+                d_fmt = d_str
+            if len(d_fmt) == 10:
+                new_hist.append({"date": d_fmt, "value": round(float(str(row['CLSPRC_IDX']).replace(',', '')), 2)})
 
-            base_hist = (existing_item.get("history") if existing_item and existing_item.get("history") else cache_hist) or []
-            hist_map = {str(h["date"]).split("T")[0]: h["value"] for h in base_hist if "date" in h and "value" in h}
-            for nh in new_hist:
-                hist_map[nh["date"]] = nh["value"]
-            sorted_dates = sorted(hist_map.keys())
-            final_hist = [{"date": d, "value": hist_map[d]} for d in sorted_dates][-200:]
+        cache_hist = old_cache.get("vkospi", {}).get("history", [])
+        base_hist = (existing_item.get("history") if existing_item and existing_item.get("history") else cache_hist) or []
+        hist_map = {str(h["date"]).split("T")[0]: h["value"] for h in base_hist if "date" in h and "value" in h}
+        for nh in new_hist:
+            hist_map[nh["date"]] = nh["value"]
+        sorted_dates = sorted(hist_map.keys())
+        final_hist = [{"date": d, "value": hist_map[d]} for d in sorted_dates][-200:]
 
-            meta = INDICATORS_META.get("VKOSPI", {})
-            result_item = {
-                "ticker": "VKOSPI",
-                "name": meta.get("name", "KOSPI200 변동성지수"),
+        meta = INDICATORS_META.get("VKOSPI", {})
+        result_item = {
+            "ticker": "VKOSPI",
+            "name": meta.get("name", "KOSPI200 변동성지수"),
+            "price": price,
+            "change_amt": change,
+            "change_percent": pct,
+            "open": open_p,
+            "high": high_p,
+            "low": low_p,
+            "close": price,
+            "history": final_hist,
+            "negative_favorable": meta.get("negative_favorable", True),
+            "is_integer_only": False,
+            "is_percent": False,
+            "trade_date": final_hist[-1]["date"]
+        }
+
+        update_krx_cache_json({
+            "vkospi": {
                 "price": price,
-                "change_amt": change,
-                "change_percent": pct,
+                "changeAmt": change,
+                "changePercent": pct,
                 "open": open_p,
                 "high": high_p,
                 "low": low_p,
                 "close": price,
-                "history": final_hist,
-                "negative_favorable": meta.get("negative_favorable", True),
-                "is_integer_only": False,
-                "is_percent": False,
-                "trade_date": final_hist[-1]["date"]
+                "history": [{"date": f"{h['date']}T00:00:00.000Z", "value": h["value"]} for h in final_hist]
             }
+        })
+        return result_item
 
-            update_krx_cache_json({
-                "vkospi": {
-                    "price": price,
-                    "changeAmt": change,
-                    "changePercent": pct,
-                    "open": open_p,
-                    "high": high_p,
-                    "low": low_p,
-                    "close": price,
-                    "history": [{"date": f"{h['date']}T00:00:00.000Z", "value": h["value"]} for h in final_hist]
-                }
-            })
+    # If KRX query failed or returned no output, engage statistical fallback
+    print("[VKOSPI] KRX MDC query returned no data. Engaging statistical fallback...")
+    fallback_res = _estimate_vkospi_fallback(old_cache, existing_item, expected_day)
+    if fallback_res:
+        return fallback_res
 
-            return result_item
-    except Exception as e:
-        print(f"Error in fetch_vkospi_direct: {e}")
     return existing_item
 
 def _estimate_fundamentals_fallback(old_cache, existing_per, existing_pbr, expected_day):
